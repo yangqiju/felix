@@ -19,6 +19,7 @@
 package org.apache.felix.scr.impl.manager;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Dictionary;
 import java.util.HashMap;
 import java.util.Hashtable;
@@ -26,11 +27,13 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.felix.scr.component.ExtFactoryComponentInstance;
+import org.apache.felix.scr.Component;
+import org.apache.felix.scr.impl.BundleComponentActivator;
+import org.apache.felix.scr.impl.TargetedPID;
+import org.apache.felix.scr.impl.config.ComponentHolder;
 import org.apache.felix.scr.impl.helper.ComponentMethods;
 import org.apache.felix.scr.impl.metadata.ComponentMetadata;
 import org.apache.felix.scr.impl.metadata.ReferenceMetadata;
-import org.apache.felix.scr.impl.metadata.TargetedPID;
 import org.osgi.framework.Constants;
 import org.osgi.service.component.ComponentConstants;
 import org.osgi.service.component.ComponentException;
@@ -48,12 +51,13 @@ import org.osgi.service.log.LogService;
  * class directly as the holder for component instances created by the
  * {@link #newInstance(Dictionary)} method.
  * <p>
- * This class implements spec-compliant component factories and the felix 
- * "persistent" component factory, where the factory is always registered whether or
- * not all dependencies are present and the created components also persist whether or 
- * not the dependencies are present to allow the component instance to exist.
+ * Finally, if the <code>ds.factory.enabled</code> bundle context property is
+ * set to <code>true</code>, component instances can be created by factory
+ * configurations. This functionality is present for backwards compatibility
+ * with earlier releases of the Apache Felix Declarative Services implementation.
+ * But keep in mind, that this is non-standard behaviour.
  */
-public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> implements ComponentFactory, ComponentContainer<S>
+public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> implements ComponentFactory, ComponentHolder
 {
 
     /**
@@ -73,7 +77,7 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
      * supplied as the base configuration for each component instance created
      * by the {@link #newInstance(Dictionary)} method.
      */
-    private volatile Map<String, Object> m_configuration;
+    private volatile Dictionary<String, Object> m_configuration;
     
     /**
      * Flag telling if our component factory is currently configured from config admin.
@@ -89,23 +93,14 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
     
     protected TargetedPID m_targetedPID;
 
-    public ComponentFactoryImpl( ComponentContainer<S> container, ComponentMethods componentMethods )
+    public ComponentFactoryImpl( BundleComponentActivator activator, ComponentMetadata metadata )
     {
-        super( container, componentMethods );
+        super( activator, metadata, new ComponentMethods() );
         m_componentInstances = new IdentityHashMap<SingleComponentManager<S>, SingleComponentManager<S>>();
-        m_configuration = new HashMap<String, Object>();
+        m_configuration = new Hashtable<String, Object>();
     }
 
 
-    protected boolean verifyDependencyManagers()
-    {
-        if (!getComponentMetadata().isPersistentFactoryComponent())
-        {
-            return super.verifyDependencyManagers();
-        }
-        return true;    
-    }
-    
     @Override
     public boolean isFactory()
     {
@@ -121,62 +116,29 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         log( LogService.LOG_DEBUG, "Creating new instance from component factory {0} with configuration {1}",
                 new Object[] {getComponentMetadata().getName(), dictionary}, null );
 
-        cm.setFactoryProperties( dictionary );
+        ComponentInstance instance;
+        cm.setFactoryProperties( ( Dictionary<String, Object> ) dictionary );
         //configure the properties
-        cm.reconfigure( m_configuration, false, null );
+        cm.reconfigure( m_configuration, m_changeCount, m_targetedPID );
         // enable
         cm.enableInternal();
+        //activate immediately
+        cm.activateInternal( getTrackingCount().get() );
 
-        ComponentInstance instance;
-        if ( getComponentMetadata().isPersistentFactoryComponent() ) 
+        instance = cm.getComponentInstance();
+        if ( instance == null || instance.getInstance() == null )
         {
-            instance = new ModifyComponentInstance<S>(cm);
-        }
-        else
-        {
-        	instance = cm.getComponentInstance();
-        	if ( instance == null ||  instance.getInstance() == null )
-        	{
-        		// activation failed, clean up component manager
-        		cm.dispose( ComponentConstants.DEACTIVATION_REASON_DISPOSED );
-        		throw new ComponentException( "Failed activating component" );
-        	}
+            // activation failed, clean up component manager
+            cm.dispose( ComponentConstants.DEACTIVATION_REASON_DISPOSED );
+            throw new ComponentException( "Failed activating component" );
         }
 
         synchronized ( m_componentInstances )
         {
             m_componentInstances.put( cm, cm );
         }
-        
+
         return instance;
-    }
-    
-    private static class ModifyComponentInstance<S> implements ExtFactoryComponentInstance
-    {
-        private final SingleComponentManager<S> cm;
-
-        public ModifyComponentInstance(SingleComponentManager<S> cm)
-        {
-            this.cm = cm;
-        }
-
-        public void dispose()
-        {
-            cm.dispose();            
-        }
-
-        public Object getInstance()
-        {
-            final ComponentInstance componentInstance = cm.getComponentInstance();
-            return componentInstance == null? null: componentInstance.getInstance();
-        }
-
-        public void modify(Dictionary<String, ?> properties)
-        {
-            cm.setFactoryProperties( properties );
-            cm.reconfigure(false);            
-        }
-        
     }
 
     /**
@@ -191,14 +153,14 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
      *         {@code ComponentFactoryImpl} and is equal to this object;
      *         {@code false} otherwise.
      */
-    public boolean equals(Object object)
+   public boolean equals(Object object)
     {
-        if (!(object instanceof ComponentFactoryImpl<?>))
+        if (!(object instanceof ComponentFactoryImpl))
         {
             return false;
         }
 
-        ComponentFactoryImpl<?> other = (ComponentFactoryImpl<?>) object;
+        ComponentFactoryImpl other = (ComponentFactoryImpl) object;
         return getComponentMetadata().getName().equals(other.getComponentMetadata().getName());
     }
     
@@ -211,6 +173,15 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
    {
        return getComponentMetadata().getName().hashCode();
    }
+
+    /**
+     * The component factory does not have a component to create.
+     */
+    protected boolean createComponent()
+    {
+        return true;
+    }
+
 
     /**
      * The component factory does not have a component to delete.
@@ -237,13 +208,9 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
     }
 
 
-    /** 
-     * For ComponentFactoryImpl, this is used only for updating targets on the dependency managers, so we don't need any other 
-     * properties.
-     */
-    public Map<String, Object> getProperties()
+    public Dictionary<String, Object> getProperties()
     {
-        Map<String, Object> props = new HashMap<String, Object>();
+        Dictionary<String, Object> props = getServiceProperties();
 
         // add target properties of references
         List<ReferenceMetadata> depMetaData = getComponentMetadata().getDependencies();
@@ -256,7 +223,7 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         }
 
         // add target properties from configuration (if we have one)        
-        for ( String key :  m_configuration.keySet() )
+        for ( String key : Collections.list( m_configuration.keys() ) )
         {
             if ( key.endsWith( ".target" ) )
             {
@@ -267,22 +234,11 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         return props;
     }
     
-    public void setServiceProperties( Dictionary<String, ?> serviceProperties )
+    public void setServiceProperties( Dictionary serviceProperties )
     {
         throw new IllegalStateException( "ComponentFactory service properties are immutable" );
     }
 
-    @Override
-    void postRegister()
-    {
-        //do nothing
-    }
-
-    @Override
-    void preDeregister()
-    {
-        //do nothing
-    }
 
     public Dictionary<String, Object> getServiceProperties()
     {
@@ -302,21 +258,20 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         return false;
     }
 
-    protected boolean collectDependencies(ComponentContextImpl<S> componentContext)
+    protected boolean collectDependencies()
     {
         return true;
     }
 
-    <T> boolean invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> ref, int trackingCount )
-    {
-    	return false;
-    }
-
-    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> reference, int trackingCount )
+    <T> void invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<T> ref, int trackingCount )
     {
     }
 
-    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> oldRef, int trackingCount )
+    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> reference, int trackingCount )
+    {
+    }
+
+    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> oldRef, int trackingCount )
     {
     }
 
@@ -330,17 +285,179 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         return null;
     }
 
+
+    //---------- ComponentHolder interface
+
+    public void configurationDeleted( String pid )
+    {
+        m_targetedPID = null;
+        if ( pid.equals( getComponentMetadata().getConfigurationPid() ) )
+        {
+            log( LogService.LOG_DEBUG, "Handling configuration removal", null );
+
+            m_changeCount = -1;
+            // nothing to do if there is no configuration currently known.
+            if ( !m_hasConfiguration )
+            {
+                log( LogService.LOG_DEBUG, "ignoring configuration removal: not currently configured", null );
+                return;
+            }
+
+            // So far, we were configured: clear the current configuration.
+            m_hasConfiguration = false;
+            m_configuration = new Hashtable();
+
+            log( LogService.LOG_DEBUG, "Current component factory state={0}", new Object[] {getState()}, null );
+
+            // And deactivate if we are not currently disposed and if configuration is required
+            if ( ( getState() & STATE_DISPOSED ) == 0 && getComponentMetadata().isConfigurationRequired() )
+            {
+                log( LogService.LOG_DEBUG, "Deactivating component factory (required configuration has gone)", null );
+                deactivateInternal( ComponentConstants.DEACTIVATION_REASON_CONFIGURATION_DELETED, true, false );
+            }
+        }
+        else
+        {
+            // 112.7 Factory Configuration not allowed for factory component
+            log( LogService.LOG_ERROR, "Component Factory cannot be configured by factory configuration", null );
+        }
+    }
+
+
+    public boolean configurationUpdated( String pid, Dictionary<String, Object> configuration, long changeCount, TargetedPID targetedPid )
+    {
+        if ( m_targetedPID != null && !m_targetedPID.equals( targetedPid ))
+        {
+            log( LogService.LOG_ERROR, "ImmediateComponentHolder unexpected change in targetedPID from {0} to {1}",
+                    new Object[] {m_targetedPID, targetedPid}, null);
+            throw new IllegalStateException("Unexpected targetedPID change");
+        }
+        m_targetedPID = targetedPid;
+        if ( configuration != null )
+        {
+            if ( changeCount <= m_changeCount )
+            {
+                log( LogService.LOG_DEBUG,
+                        "ImmediateComponentHolder out of order configuration updated for pid {0} with existing count {1}, new count {2}",
+                        new Object[] { getConfigurationPid(), m_changeCount, changeCount }, null );
+                return false;
+            }
+            m_changeCount = changeCount;
+        }
+        else 
+        {
+            m_changeCount = -1;
+        }
+        if ( pid.equals( getComponentMetadata().getConfigurationPid() ) )
+        {
+            log( LogService.LOG_DEBUG, "Configuration PID updated for Component Factory", null );
+
+            // Ignore the configuration if our policy is 'ignore'
+            if ( getComponentMetadata().isConfigurationIgnored() )
+            {
+                return false;
+            }
+
+            // Store the config admin configuration
+            m_configuration = configuration;
+
+            // We are now configured from config admin.
+            m_hasConfiguration = true;
+
+            log( LogService.LOG_DEBUG, "Current ComponentFactory state={0}", new Object[]
+                    {getState()}, null );
+
+            // If we are active, but if some config target filters don't match anymore
+            // any required references, then deactivate.
+            if ( getState() == STATE_FACTORY )
+            {
+                log( LogService.LOG_DEBUG, "Verifying if Active Component Factory is still satisfied", null );
+
+                // First update target filters.
+                updateTargets( getProperties() );
+
+                // Next, verify dependencies
+                if ( !verifyDependencyManagers() )
+                {
+                    log( LogService.LOG_DEBUG,
+                            "Component Factory target filters not satisfied anymore: deactivating", null );
+                    deactivateInternal( ComponentConstants.DEACTIVATION_REASON_REFERENCE, false, false );
+                    return false;
+                }
+            }
+
+            // Unsatisfied component and required configuration may change targets
+            // to satisfy references.
+            if ( getState() == STATE_UNSATISFIED && getComponentMetadata().isConfigurationRequired() )
+            {
+                // try to activate our component factory, if all dependnecies are satisfied
+                log( LogService.LOG_DEBUG, "Attempting to activate unsatisfied component", null );
+                // First update target filters.
+                updateTargets( getProperties() );
+                activateInternal( getTrackingCount().get() );
+            }
+        }
+        else
+        {
+            // 112.7 Factory Configuration not allowed for factory component
+            log( LogService.LOG_ERROR, "Component Factory cannot be configured by factory configuration", null );
+        }
+        return false;
+    }
+
+
+    public synchronized long getChangeCount( String pid)
+    {
+        
+        return m_changeCount;
+    }
+
+    public Component[] getComponents()
+    {
+        List<AbstractComponentManager<S>> cms = getComponentList();
+        return cms.toArray( new Component[ cms.size() ] );
+    }
+
+    protected List<AbstractComponentManager<S>> getComponentList()
+    {
+        List<AbstractComponentManager<S>> cms = new ArrayList<AbstractComponentManager<S>>( );
+        cms.add( this );
+        getComponentManagers( m_componentInstances, cms );
+        return cms;
+    }
+
+
+    /**
+     * A component factory component holder enables the held components by
+     * enabling itself.
+     */
+    public void enableComponents( boolean async )
+    {
+        enable( async );
+    }
+
+
+    /**
+     * A component factory component holder disables the held components by
+     * disabling itself.
+     */
+    public void disableComponents( boolean async )
+    {
+        disable( async );
+    }
+
+
     /**
      * Disposes off all components ever created by this component holder. This
      * method is called if either the Declarative Services runtime is stopping
      * or if the owning bundle is stopped. In both cases all components created
      * by this holder must be disposed off.
      */
-    public void dispose( int reason )
+    public void disposeComponents( int reason )
     {
         List<AbstractComponentManager<S>> cms = new ArrayList<AbstractComponentManager<S>>( );
         getComponentManagers( m_componentInstances, cms );
-        for ( AbstractComponentManager<S> acm: cms )
+        for ( AbstractComponentManager acm: cms )
         {
             acm.dispose( reason );
         }
@@ -351,11 +468,11 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         }
 
         // finally dispose the component factory itself
-        super.dispose( reason );
+        dispose( reason );
     }
 
 
-    public void disposed( SingleComponentManager<S> component )
+    public void disposed( SingleComponentManager component )
     {
         synchronized ( m_componentInstances )
         {
@@ -375,7 +492,7 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
      */
     private SingleComponentManager<S> createComponentManager()
     {
-        return new SingleComponentManager<S>( this, getComponentMethods(), !getComponentMetadata().isPersistentFactoryComponent() );
+        return new ComponentFactoryNewInstance<S>( getActivator(), this, getComponentMetadata(), getComponentMethods() );
     }
 
 
@@ -390,38 +507,20 @@ public class ComponentFactoryImpl<S> extends AbstractComponentManager<S> impleme
         }
     }
 
-    public TargetedPID getConfigurationTargetedPID(TargetedPID pid, TargetedPID factoryPid)
+    static class ComponentFactoryNewInstance<S> extends SingleComponentManager<S> {
+
+        public ComponentFactoryNewInstance( BundleComponentActivator activator, ComponentHolder componentHolder,
+                ComponentMetadata metadata, ComponentMethods componentMethods )
+        {
+            super( activator, componentHolder, metadata, componentMethods, true );
+        }
+
+    }
+
+    public TargetedPID getConfigurationTargetedPID(TargetedPID pid)
     {
         return m_targetedPID;
     }
 
-
-	@Override
-	public void reconfigure(Map<String, Object> configuration, boolean configurationDeleted, TargetedPID factoryPid) {
-	    if ( factoryPid != null ) {
-	        // ignore factory configuration changes for component factories.
-	        return;
-	    }
-		m_configuration = configuration;
-		List<SingleComponentManager<S>> cms;
-		synchronized (m_componentInstances)
-        {
-            cms = new ArrayList<SingleComponentManager<S>>(m_componentInstances.keySet());
-        }
-		for (SingleComponentManager<S> cm: cms)
-		{
-		    cm.reconfigure( configuration, configurationDeleted, factoryPid);
-		}
-	}
-
-
-    @Override
-    public void getComponentManagers(List<AbstractComponentManager<S>> cms)
-    {
-        synchronized (m_componentInstances)
-        {
-            cms.addAll(m_componentInstances.keySet());
-        }
-    }
 
 }

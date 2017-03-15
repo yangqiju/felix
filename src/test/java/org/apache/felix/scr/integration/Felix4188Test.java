@@ -18,9 +18,6 @@
  */
 package org.apache.felix.scr.integration;
 
-import static org.ops4j.pax.tinybundles.core.TinyBundles.bundle;
-import static org.ops4j.pax.tinybundles.core.TinyBundles.withBnd;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -28,9 +25,8 @@ import java.util.concurrent.CountDownLatch;
 
 import javax.inject.Inject;
 
-import junit.framework.Assert;
 import junit.framework.TestCase;
-
+import org.apache.felix.scr.Component;
 import org.apache.felix.scr.integration.components.felix4188.Felix4188Component;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -39,9 +35,9 @@ import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.BundleException;
 import org.osgi.framework.Constants;
-import org.osgi.framework.InvalidSyntaxException;
-import org.osgi.framework.ServiceReference;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
+
+import static org.ops4j.pax.tinybundles.core.TinyBundles.bundle;
+import static org.ops4j.pax.tinybundles.core.TinyBundles.withBnd;
 
 /**
  * This test validates the FELIX-4188 issue.
@@ -53,9 +49,9 @@ public class Felix4188Test extends ComponentTestBase
     static
     {
         // uncomment to enable debugging of this test class
-//                paxRunnerVmOption = DEBUG_VM_OPTION;
+        //        paxRunnerVmOption = DEBUG_VM_OPTION;
         descriptorFile = "/integration_test_FELIX_4188.xml";
-//        restrictedLogging = true;
+        restrictedLogging = true;
         //comment to get debug logging if the test fails.
 //        DS_LOGLEVEL = "warn";
     }
@@ -66,19 +62,21 @@ public class Felix4188Test extends ComponentTestBase
     @Test
     public void test_concurrent_deactivation() throws Exception
     {
-        final Bundle bundle1 = installBundle("/integration_test_FELIX_4188_1.xml", "org.apache.felix.scr.integration.components", "simplecomponent1");
+        final Bundle bundle1 = installBundle("/integration_test_FELIX_4188_1.xml", "", "simplecomponent1");
         bundle1.start();
 
-        final Bundle bundle2 = installBundle("/integration_test_FELIX_4188_2.xml", "org.apache.felix.scr.integration.components", "simplecomponent2");
+        final Bundle bundle2 = installBundle("/integration_test_FELIX_4188_2.xml", "", "simplecomponent2");
         bundle2.start();
 
-        final ComponentConfigurationDTO aComp1 =
-                findComponentConfigurationByName( bundle1, "org.apache.felix.scr.integration.components.Felix4188Component-1", ComponentConfigurationDTO.SATISFIED);
-        final Object aInst1 = getServiceFromConfigurationInAllClassSpaces(aComp1, Felix4188Component.class.getName());
+        final Component aComp1 =
+                findComponentByName("org.apache.felix.scr.integration.components.Felix4188Component-1");
+        aComp1.enable();
+        final Object aInst1 = aComp1.getComponentInstance().getInstance();
 
-        final ComponentConfigurationDTO aComp2 =
-                findComponentConfigurationByName( bundle2, "org.apache.felix.scr.integration.components.Felix4188Component-2", ComponentConfigurationDTO.SATISFIED);
-        final Object aInst2 = getServiceFromConfigurationInAllClassSpaces(aComp2, Felix4188Component.class.getName());
+        final Component aComp2 =
+                findComponentByName("org.apache.felix.scr.integration.components.Felix4188Component-2");
+        aComp2.enable();
+        final Object aInst2 = aComp2.getComponentInstance().getInstance();
 
         final CountDownLatch latch = new CountDownLatch(1);
 
@@ -115,23 +113,6 @@ public class Felix4188Test extends ComponentTestBase
         field.setAccessible(true);
         return field.get(instance);
     }
-
-    // Note that this test installs two bundles both with the same class in it.
-    // This causes multiple class spaces to be created by the framework.
-    private Object getServiceFromConfigurationInAllClassSpaces( ComponentConfigurationDTO dto, String clazz ) throws InvalidSyntaxException
-    {
-        long id = dto.id;
-        String filter = "(component.id=" + id + ")";
-        ServiceReference<?>[] srs;
-
-        srs = bundleContext.getAllServiceReferences(clazz, filter);
-        Assert.assertEquals(1, srs.length);
-        ServiceReference<?> sr = srs[0];
-        Object s = bundleContext.getService(sr);
-        Assert.assertNotNull(s);
-        return s;
-    }
-
 
     protected Bundle installBundle( final String descriptorFile, String componentPackage, String symbolicname ) throws BundleException
     {

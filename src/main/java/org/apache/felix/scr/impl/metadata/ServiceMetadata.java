@@ -19,6 +19,7 @@
 package org.apache.felix.scr.impl.metadata;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -27,14 +28,9 @@ import java.util.List;
  *
  */
 public class ServiceMetadata {
-	
-	public enum Scope { singleton, bundle, prototype}
 
 	// 112.4.6 Flag that indicates if the service is a ServiceFactory
-	private Boolean m_serviceFactory;
-	
-	private String m_scopeName;
-	private Scope m_scope = Scope.singleton;
+	private boolean m_serviceFactory = false;
 
 	// List of provided interfaces
 	private List<String> m_provides = new ArrayList<String>();
@@ -54,19 +50,6 @@ public class ServiceMetadata {
 
 		m_serviceFactory = serviceFactory;
 	}
-	
-	public void setScope(String scopeName) {
-		if(m_validated) {
-			return;
-		}
-		this.m_scopeName = scopeName;
-	}
-
-	
-
-	public Scope getScope() {
-		return m_scope;
-	}
 
 	/**
 	 * Add a provided interface to this service
@@ -79,6 +62,15 @@ public class ServiceMetadata {
 		}
 
 		m_provides.add(provide);
+	}
+
+	/**
+	 * Return the flag that defines if it is a service factory or not
+	 *
+	 * @return a boolean flag
+	 */
+	public boolean isServiceFactory() {
+		return m_serviceFactory;
 	}
 
 	/**
@@ -100,37 +92,6 @@ public class ServiceMetadata {
         {
             throw componentMetadata
                 .validationFailure( "At least one provided interface must be declared in the service element" );
-        }
-        for ( String provide: m_provides )
-        {
-        	if ( provide == null )
-        	{
-                throw componentMetadata
-                    .validationFailure( "Null provides.  Possibly service is not specified as value of attribute 'interface'" );
-        	}
-        }
-        if (m_serviceFactory != null)
-        {
-        	if ( componentMetadata.getDSVersion().isDS13() )
-        	{
-            	throw componentMetadata.validationFailure("service-factory can only be specified in version 1.2 and earlier");
-        	}
-        	m_scope = m_serviceFactory? Scope.bundle: Scope.singleton;
-        }
-        if ( m_scopeName != null )
-        {
-        	if ( !componentMetadata.getDSVersion().isDS13() )
-        	{ 
-            	throw componentMetadata.validationFailure("service scope can only be specified in version 1.3 and later");
-        	}
-        	try
-        	{
-        		m_scope = Scope.valueOf(m_scopeName);
-        	}
-        	catch (IllegalArgumentException e)
-        	{
-            	throw componentMetadata.validationFailure("Service scope may be only 'singleton' 'bundle' or 'prototype' not " + m_scopeName);
-        	}
         }
         m_validated = true;
     }

@@ -22,7 +22,6 @@
     <!-- Component Factory Instances -->
     <scr:component name="factory.component"
         enabled="false"
-        modified="modified"
         factory="factory.component.factory" >
         <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
     </scr:component>
@@ -31,43 +30,11 @@
     <scr:component name="factory.component.configuration"
         enabled="false"
         configuration-policy="require"
-        factory="factory.component.factory.configuration"
-        modified="modified" >
+        factory="factory.component.factory.configuration" >
         <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
     </scr:component>
     
-    <scr:component name="factory.component.configuration.obsolete"
-        enabled="false"
-        configuration-policy="require"
-        xmlns:felix="http://felix.apache.org/xmlns/scr/extensions/v1.0.0"
-        felix:obsoleteFactoryComponentFactory="true" >
-        <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
-        <property name="foo">bar</property>
-    </scr:component>
-
-    <scr:component name="factory.component.configuration.optional"
-        enabled="false"
-        configuration-policy="optional"
-        factory="factory.component.factory.configuration.optional"
-        modified="modified" >
-        <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
-    </scr:component>
-    
-    <scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.3.0" name="factory.component.configuration.optional.13"
-        enabled="false"
-        configuration-policy="optional"
-        factory="factory.component.factory.configuration.optional.13"
-        modified="modified" >
-        <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
-    </scr:component>
-    
-    <scr:component name="factory.component.configuration.optional.nomodify"
-        enabled="false"
-        configuration-policy="optional"
-        factory="factory.component.factory.configuration.optional.nomodify">
-        <implementation class="org.apache.felix.scr.integration.components.SimpleComponent" />
-    </scr:component>
-    
+    <!-- Component Factory Instances, requiring configuration -->
     <scr:component name="factory.component.reference"
         enabled="false"
         configuration-policy="ignore"

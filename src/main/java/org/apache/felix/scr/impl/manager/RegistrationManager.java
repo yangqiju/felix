@@ -19,6 +19,7 @@
 package org.apache.felix.scr.impl.manager;
 
 import java.util.ArrayList;
+import java.util.Dictionary;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -67,14 +68,15 @@ abstract class RegistrationManager<T>
         {
             return regState.toString();
         }
-
+        
+        
+        
     }
     private final Lock registrationLock = new ReentrantLock();
     //Deque, ArrayDeque if we had java 6
     private final List<RegStateWrapper> opqueue = new ArrayList<RegStateWrapper>();
 
     private volatile T m_serviceRegistration;
-
     /**
      * 
      * @param desired desired registration state
@@ -153,7 +155,6 @@ abstract class RegistrationManager<T>
                     if ( next.getRegState() == RegState.registered)
                     {
                         m_serviceRegistration = serviceRegistration;
-                        postRegister( m_serviceRegistration );
                     }
                     next.getLatch().countDown();
                 }
@@ -199,8 +200,6 @@ abstract class RegistrationManager<T>
     }
     
     abstract T register(String[] services);
-
-    abstract void postRegister(T t);
 
     abstract void unregister(T serviceRegistration);
     

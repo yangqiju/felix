@@ -31,12 +31,12 @@ public class Consumer
         this.cc = cc;
     }
     
-    protected void setTestComponent(TestComponent tc)
+    protected void setSimpleComponent(TestComponent sc)
     {
-        tc.doIt( );       
+        sc.doIt( );       
     }
     
-    protected void unsetTestComponent(ServiceReference<TestComponent> sr)
+    protected void unsetSimpleComponent(ServiceReference<TestComponent> sr)
     {
         
     }    

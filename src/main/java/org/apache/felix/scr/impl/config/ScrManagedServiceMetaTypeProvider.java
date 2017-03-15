@@ -21,7 +21,7 @@ package org.apache.felix.scr.impl.config;
 import java.io.InputStream;
 import java.util.ArrayList;
 
-import org.apache.felix.scr.impl.manager.ScrConfiguration;
+import org.osgi.service.cm.ManagedService;
 import org.osgi.service.metatype.AttributeDefinition;
 import org.osgi.service.metatype.MetaTypeProvider;
 import org.osgi.service.metatype.ObjectClassDefinition;
@@ -44,12 +44,12 @@ class ScrManagedServiceMetaTypeProvider extends ScrManagedService
     implements MetaTypeProvider
 {
 
-    static ScrManagedService create(final ScrConfigurationImpl scrConfiguration)
+    static ManagedService create(final ScrConfiguration scrConfiguration)
     {
         return new ScrManagedServiceMetaTypeProvider(scrConfiguration);
     }
 
-    private ScrManagedServiceMetaTypeProvider(final ScrConfigurationImpl scrConfiguration)
+    private ScrManagedServiceMetaTypeProvider(final ScrConfiguration scrConfiguration)
     {
         super(scrConfiguration);
     }
@@ -99,30 +99,22 @@ class ScrManagedServiceMetaTypeProvider extends ScrManagedService
                     + "Declarative Services specifications suggests that instances of delayed components are disposed off "
                     + "if there is not used any longer. Setting this flag causes the components to not be disposed off "
                     + "and thus prevent them from being constantly recreated if often used. Examples of such components "
-                    + "may be EventHandler services. The default is to dispose of unused components.", this
+                    + "may be EventHandler services. The default is to dispose off unused components.", this
                     .getScrConfiguration().keepInstances() ) );
+
+        adList.add( new AttributeDefinitionImpl(
+                ScrConfiguration.PROP_INFO_SERVICE,
+                "Bind Info Service",
+                "Whether to bind a service backing the console commands providing info on components.", 
+                this.getScrConfiguration().infoAsService() ) );
 
         adList.add( new AttributeDefinitionImpl(
                 ScrConfiguration.PROP_LOCK_TIMEOUT,
                 "Lock timeout milliseconds",
-                "How long a lock is held before releasing due to suspected deadlock",
+                "How long a lock is held before releasing due to suspected deadlock", 
                 AttributeDefinition.LONG,
-                new String[] { String.valueOf(this.getScrConfiguration().lockTimeout())},
+                new String[] { String.valueOf(this.getScrConfiguration().lockTimeout())}, 
                 0, null, null) );
-
-        adList.add( new AttributeDefinitionImpl(
-                ScrConfiguration.PROP_STOP_TIMEOUT,
-                "Stop timeout milliseconds",
-                "How long stopping a bundle is waited for before continuing due to suspected deadlock",
-                AttributeDefinition.LONG,
-                new String[] { String.valueOf(this.getScrConfiguration().stopTimeout())},
-                0, null, null) );
-
-        adList.add( new AttributeDefinitionImpl(
-                ScrConfiguration.PROP_GLOBAL_EXTENDER,
-                "Global Extender",
-                "Whether to extend all bundles whether or not visible to this bundle.",
-                false ) );
 
         return new ObjectClassDefinition()
         {

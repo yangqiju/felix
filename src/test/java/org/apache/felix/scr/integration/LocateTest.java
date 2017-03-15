@@ -22,12 +22,16 @@ import static org.junit.Assert.*;
 
 import java.util.Hashtable;
 
+import junit.framework.TestCase;
+
+import org.apache.felix.scr.Component;
+import org.apache.felix.scr.integration.components.SimpleServiceImpl;
+import org.apache.felix.scr.integration.components.deadlock.Consumer;
 import org.apache.felix.scr.integration.components.deadlock.TestComponent;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.junit.JUnit4TestRunner;
 import org.osgi.service.cm.Configuration;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
 
 @RunWith(JUnit4TestRunner.class)
 public class LocateTest extends ComponentTestBase
@@ -46,25 +50,27 @@ public class LocateTest extends ComponentTestBase
     {
         bundleContext.registerService( Object.class, new Object(), null );
         
-        findComponentConfigurationByName( "Consumer", ComponentConfigurationDTO.ACTIVE );
+        final Component consumerComponent = findComponentByName( "AsyncLocate" );
+        TestCase.assertNotNull( consumerComponent );
+        TestCase.assertEquals( Component.STATE_ACTIVE, consumerComponent.getState() );
         
-        final String pid = "TestComponent";
+        final String pid = "SimpleComponent";
         Configuration config = getConfigurationAdmin().getConfiguration( pid, null );
         final Hashtable props = new Hashtable();
-        //wrong target property, will not bind
         props.put( "target", "bar" );
         config.update(props);
         delay();
         
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
         //when deadlock is present the state is actually unsatisfied.
-        ComponentConfigurationDTO cc = findComponentConfigurationByName( pid, ComponentConfigurationDTO.SATISFIED );
-//        delay();
-        //correct target property: will bind as new properties are propagated.
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
+        delay();
         props.put( "target", "foo" );
         config.update(props);
         delay();
        
-        TestComponent tc = getServiceFromConfiguration(cc, TestComponent.class);
+        TestComponent tc = (TestComponent) component.getComponentInstance().getInstance();
         assertTrue(tc.isSuccess1());
         assertTrue(tc.isSuccess2());
     }

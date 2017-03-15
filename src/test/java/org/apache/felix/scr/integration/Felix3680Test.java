@@ -24,11 +24,11 @@ import javax.inject.Inject;
 
 import junit.framework.TestCase;
 
+import org.apache.felix.scr.Component;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.junit.JUnit4TestRunner;
 import org.osgi.framework.BundleContext;
-import org.osgi.service.component.runtime.dto.ComponentDescriptionDTO;
 
 /**
  * This test validates the FELIX-3680 issue.
@@ -62,13 +62,15 @@ public class Felix3680Test extends ComponentTestBase
     }
 
     @Test
-    public void test_concurrent_reference_bindings() throws Exception
+    public void test_concurrent_reference_bindings()
     {
-        final ComponentDescriptionDTO main = findComponentDescriptorByName( "org.apache.felix.scr.integration.components.felix3680.Main" );
-        enableAndCheck(main);
+        final Component main =
+                findComponentByName("org.apache.felix.scr.integration.components.felix3680.Main");
+        TestCase.assertNotNull(main);
+        main.enable();
 
         delay(30);
-        disableAndCheck( main );
+        main.disable();
         delay( ); //async deactivate
         for (Iterator it = log.foundWarnings().iterator(); it.hasNext();)
         {

@@ -19,8 +19,6 @@
 package org.apache.felix.scr.impl.manager;
 
 import java.util.Hashtable;
-import java.util.Map;
-
 import junit.framework.TestCase;
 
 public class AbstractComponentManagerTest extends TestCase
@@ -28,11 +26,11 @@ public class AbstractComponentManagerTest extends TestCase
 
     public void test_copyTo_withoutExclusions()
     {
-        final Hashtable<String, String> ht = new Hashtable<String, String>();
+        final Hashtable ht = new Hashtable();
         ht.put( "p1", "v1" );
         ht.put( "p.2", "v2" );
         ht.put( ".p3", "v3" );
-        final Map<String, Object> dict = AbstractComponentManager.copyToMap( ht, true );
+        final Hashtable dict = (Hashtable) AbstractComponentManager.copyTo( null, ht, true );
         assertNotNull( "Copy result is not null", dict );
         assertEquals( "Number of items", 3, dict.size() );
         assertEquals( "Value for key p1", "v1", dict.get( "p1" ) );
@@ -42,11 +40,11 @@ public class AbstractComponentManagerTest extends TestCase
 
     public void test_copyTo_excludingStartingWithDot()
     {
-        final Hashtable<String, String> ht = new Hashtable<String, String>();
+        final Hashtable ht = new Hashtable();
         ht.put( "p1", "v1" );
         ht.put( "p.2", "v2" );
         ht.put( ".p3", "v3" );
-        final Map<String, Object> dict = AbstractComponentManager.copyToMap( ht, false );
+        final Hashtable dict = (Hashtable) AbstractComponentManager.copyTo( null, ht, false );
         assertNotNull( "Copy result is not null", dict );
         assertEquals( "Number of items", 2, dict.size() );
         assertEquals( "Value for key p1", "v1", dict.get( "p1" ) );

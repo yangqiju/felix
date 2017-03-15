@@ -33,17 +33,10 @@ public class ActivatorComponent
     public static final String FLAG_FAIL_DEACTIVATE = "failDeactivate";
 
     public static final String FLAG_REGISTER_SERVICE = "registerService";
-    
-    private static ActivatorComponent activatorComponent;
 
     private ServiceRegistration registration;
 
     private SimpleService simpleService;
-    
-    public static ActivatorComponent getInstance()
-    {
-    	return activatorComponent;
-    }
 
     @SuppressWarnings("unused")
     private void myActivate( BundleContext context, Map<?, ?> configuration )
@@ -56,11 +49,6 @@ public class ActivatorComponent
         {
             registration = context.registerService( SimpleService.class.getName(), new SimpleServiceImpl(), null );
         }
-        if ( activatorComponent != null )
-        {
-        	throw new IllegalStateException( "not the only activator component");
-        }
-        this.activatorComponent = this;
     }
 
 

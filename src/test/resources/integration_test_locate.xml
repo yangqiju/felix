@@ -11,7 +11,7 @@
 	language governing permissions and limitations under the License. -->
 <components xmlns:scr="http://www.osgi.org/xmlns/scr/v1.1.0"> 
 
-    <scr:component name="TestComponent"
+    <scr:component name="SimpleComponent"
         configuration-policy="require">
         <implementation class="org.apache.felix.scr.integration.components.deadlock.TestComponent" />
         <service>
@@ -28,17 +28,17 @@
     </scr:component>
 
 
-    <scr:component name="Consumer"
+    <scr:component name="AsyncLocate"
         immediate="true">
         <implementation class="org.apache.felix.scr.integration.components.deadlock.Consumer" />
         <reference
-            name="TestComponent"
+            name="SimpleComponent"
             interface="org.apache.felix.scr.integration.components.deadlock.TestComponent"
             cardinality="0..1"
             policy="dynamic"
-            bind="setTestComponent"
-            unbind="unsetTestComponent"
-            target='(target=foo)'
+            bind="setSimpleComponent"
+            unbind="unsetSimpleComponent"
+            target='target="foo"'
         />
     </scr:component>
 

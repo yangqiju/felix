@@ -20,20 +20,20 @@
 
 package org.apache.felix.scr.impl.manager;
 
-import org.apache.felix.scr.impl.helper.SimpleLogger;
-import org.osgi.framework.BundleContext;
-import org.osgi.framework.ServiceObjects;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.osgi.framework.ServiceReference;
 
 /**
- * @version $Rev$ $Date$
+ * @version $Rev:$ $Date:$
  */
-public abstract class RefPair<S, T>
+public class RefPair<T>
 {
     private final ServiceReference<T> ref;
+    private AtomicReference<T> serviceObjectRef = new AtomicReference<T>();
 
-    boolean failed;
-    volatile boolean deleted;
+    private boolean failed;
+    private volatile boolean deleted;
 
     public RefPair( ServiceReference<T> ref )
     {
@@ -45,18 +45,25 @@ public abstract class RefPair<S, T>
         return ref;
     }
 
-    public ServiceObjects<T> getServiceObjects()
+    public T getServiceObject()
     {
-        return null;
+        return serviceObjectRef.get();
     }
 
-    public abstract boolean getServiceObject( ComponentContextImpl<S> key, BundleContext context, SimpleLogger logger );
-
-    public abstract T getServiceObject(ComponentContextImpl<S> key);
-
-    public abstract boolean setServiceObject( ComponentContextImpl<S> key, T serviceObject );
-
-    public abstract T unsetServiceObject(ComponentContextImpl<S> key);
+    public boolean setServiceObject( T serviceObject )
+    {
+        boolean set = serviceObjectRef.compareAndSet( null, serviceObject );
+        if ( serviceObject != null)
+        {
+            failed = false;
+        }
+        return set;
+    }
+    
+    public T unsetServiceObject()
+    {
+        return serviceObjectRef.getAndSet( null );
+    }
 
     public void setFailed( )
     {
@@ -73,8 +80,14 @@ public abstract class RefPair<S, T>
         return deleted;
     }
 
-    public void markDeleted()
+    public void setDeleted(boolean deleted)
     {
-        this.deleted = true;
+        this.deleted = deleted;
+    }
+
+    @Override
+    public String toString()
+    {
+        return "[RefPair: ref: [" + ref + "] service: [" + serviceObjectRef.get() + "]]";
     }
 }

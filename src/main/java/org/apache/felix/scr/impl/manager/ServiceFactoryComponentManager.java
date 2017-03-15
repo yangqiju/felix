@@ -21,15 +21,20 @@ package org.apache.felix.scr.impl.manager;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Dictionary;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 
-import org.apache.felix.scr.impl.helper.ComponentMethod;
+import org.apache.felix.scr.impl.BundleComponentActivator;
+import org.apache.felix.scr.impl.config.ComponentHolder;
+import org.apache.felix.scr.impl.helper.ActivateMethod;
 import org.apache.felix.scr.impl.helper.ComponentMethods;
 import org.apache.felix.scr.impl.helper.MethodResult;
+import org.apache.felix.scr.impl.helper.ModifiedMethod;
+import org.apache.felix.scr.impl.metadata.ComponentMetadata;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.component.ComponentConstants;
+import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.ComponentInstance;
 import org.osgi.service.log.LogService;
 
@@ -41,30 +46,30 @@ import org.osgi.service.log.LogService;
 public class ServiceFactoryComponentManager<S> extends SingleComponentManager<S>
 {
 
-    @Override
-    public void setServiceProperties(Dictionary<String, ?> serviceProperties)
-    {
-        throw new IllegalStateException( "Bundle or instance scoped service properties are immutable" );
-    }
-
-
-    @Override
-    void postRegister()
-    {
-        // do nothing
-    }
-
     // maintain the map of ComponentContext objects created for the
     // service instances
-    private IdentityHashMap<S, ComponentContextImpl<S>> serviceContexts = new IdentityHashMap<S, ComponentContextImpl<S>>();
+    private IdentityHashMap<S, ComponentContextImpl> serviceContexts = new IdentityHashMap<S, ComponentContextImpl>();
 
     /**
-     * @param container ComponentHolder for configuration management
+     * @param activator BundleComponentActivator for this DS implementation
+	 * @param componentHolder ComponentHolder for configuration management
+     * @param metadata ComponentMetadata for this component
      * @param componentMethods
      */
-    public ServiceFactoryComponentManager( ComponentContainer<S> container, ComponentMethods componentMethods )
+    public ServiceFactoryComponentManager( BundleComponentActivator activator, ComponentHolder componentHolder,
+            ComponentMetadata metadata, ComponentMethods componentMethods )
     {
-        super( container, componentMethods );
+        super( activator, componentHolder, metadata, componentMethods );
+    }
+
+
+    /* (non-Javadoc)
+     * @see org.apache.felix.scr.AbstractComponentManager#createComponent()
+     */
+    protected boolean createComponent()
+    {
+        // nothing to do, this is handled by getService
+        return true;
     }
 
 
@@ -77,7 +82,7 @@ public class ServiceFactoryComponentManager<S> extends SingleComponentManager<S>
         {
             throw new IllegalStateException( "need write lock (deleteComponent)" );
         }
-        for (ComponentContextImpl<S> componentContext: getComponentContexts() )
+        for (ComponentContextImpl componentContext: getComponentContexts() )
         {
             disposeImplementationObject( componentContext, reason );
             log( LogService.LOG_DEBUG, "Unset implementation object for component {0} in deleteComponent for reason {1}", new Object[] { getName(), REASONS[ reason ] },  null );
@@ -88,28 +93,47 @@ public class ServiceFactoryComponentManager<S> extends SingleComponentManager<S>
 
 
     /* (non-Javadoc)
+     * @see org.apache.felix.scr.AbstractComponentManager#getInstance()
+     */
+    S getInstance()
+    {
+        // this method is not expected to be called as the base call is
+        // overwritten in the ComponentContextImpl class
+        return null;
+    }
+
+
+    /* (non-Javadoc)
      * @see org.osgi.framework.ServiceFactory#getService(org.osgi.framework.Bundle, org.osgi.framework.ServiceRegistration)
      */
-    public S getService( Bundle bundle, ServiceRegistration<S> serviceRegistration )
+    public S getService( Bundle bundle, ServiceRegistration<S> registration )
     {
         log( LogService.LOG_DEBUG, "ServiceFactory.getService()", null );
 
         // When the getServiceMethod is called, the implementation object must be created
 
-        ComponentContextImpl<S> componentContext = new ComponentContextImpl<S>(this, bundle, serviceRegistration);
-        if (collectDependencies(componentContext) )
+        try
         {
-            log( LogService.LOG_DEBUG,
-                "getService (ServiceFactory) dependencies collected.",
-                null );
+            if ( !collectDependencies() )
+            {
+                log( LogService.LOG_DEBUG,
+                        "getService (ServiceFactory) did not win collecting dependencies, try creating object anyway.",
+                        null );
 
+            }
+            else
+            {
+                log( LogService.LOG_DEBUG,
+                        "getService (ServiceFactory) won collecting dependencies, proceed to creating object.",
+                        null );
+
+            }
         }
-        else
+        catch ( IllegalStateException e )
         {
             //cannot obtain service from a required reference
             return null;
         }
-        State previousState = getState();
         // private ComponentContext and implementation instances
         S service = createImplementationObject( bundle, new SetImplementationObject<S>()
         {
@@ -129,18 +153,14 @@ public class ServiceFactoryComponentManager<S> extends SingleComponentManager<S>
                 }
             }
 
-        }, componentContext );
+        } );
 
-        // register the components component context if successful
+        // register the components component context if successfull
         if ( service == null )
         {
             // log that the service factory component cannot be created (we don't
             // know why at this moment; this should already have been logged)
-            log( LogService.LOG_DEBUG, "Failed creating the component instance; see log for reason", null );
-        } 
-        else 
-        {
-             setState(previousState, State.active);
+            log( LogService.LOG_ERROR, "Failed creating the component instance; see log for reason", null );
         }
 
         return service;
@@ -166,62 +186,54 @@ public class ServiceFactoryComponentManager<S> extends SingleComponentManager<S>
         {
             serviceContexts.remove( service );
             // if this was the last use of the component, go back to REGISTERED state
-            State previousState;
-            if ( serviceContexts.isEmpty() && (previousState = getState()) == State.active )
+            if ( serviceContexts.isEmpty() && getState() == STATE_ACTIVE )
             {
-                setState(previousState, State.satisfied);
+                unsetDependenciesCollected();
             }
         }
     }
 
-    private Collection<ComponentContextImpl<S>> getComponentContexts()
+    private Collection<ComponentContextImpl> getComponentContexts()
     {
         synchronized ( serviceContexts )
         {
-            return new ArrayList<ComponentContextImpl<S>>( serviceContexts.values() );
+            return new ArrayList<ComponentContextImpl>( serviceContexts.values() );
         }
     }
 
-    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> refPair, int trackingCount )
+    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> refPair, int trackingCount )
     {
         for ( ComponentContextImpl<S> cc : getComponentContexts() )
         {
-            dependencyManager.invokeBindMethod( cc, refPair, trackingCount, cc.getEdgeInfo( dependencyManager ) );
+            dependencyManager.invokeBindMethod( cc.getImplementationObject( false ), refPair, trackingCount, cc.getEdgeInfo( dependencyManager ) );
         }
     }
 
-    <T> boolean invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> refPair, int trackingCount )
+    <T> void invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<T> refPair, int trackingCount )
     {
-    	// as all instances are treated the same == have the same updated signatures for methods/fields
-    	// we just need one result
-    	boolean reactivate = false;
         for ( ComponentContextImpl<S> cc : getComponentContexts() )
         {
-            if ( dependencyManager.invokeUpdatedMethod( cc, refPair, trackingCount, cc.getEdgeInfo( dependencyManager ) ) ) 
-            {
-            	reactivate = true;
-            }
+            dependencyManager.invokeUpdatedMethod( cc.getImplementationObject( false ), refPair, trackingCount, cc.getEdgeInfo( dependencyManager ) );
         }
-        return reactivate;
     }
 
-    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> oldRefPair, int trackingCount )
+    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> oldRefPair, int trackingCount )
     {
         for ( ComponentContextImpl<S> cc : getComponentContexts() )
         {
-            dependencyManager.invokeUnbindMethod( cc, oldRefPair, trackingCount, cc.getEdgeInfo( dependencyManager ) );
+            dependencyManager.invokeUnbindMethod( cc.getImplementationObject( false ), oldRefPair, trackingCount, cc.getEdgeInfo( dependencyManager ) );
         }
     }
 
     protected MethodResult invokeModifiedMethod()
     {
-        ComponentMethod modifiedMethod = getComponentMethods().getModifiedMethod();
+        ModifiedMethod modifiedMethod = getComponentMethods().getModifiedMethod();
         MethodResult result = MethodResult.VOID;
-        for ( ComponentContextImpl<S> componentContext : getComponentContexts() )
+        for ( ComponentContextImpl componentContext : getComponentContexts() )
         {
-            S instance = componentContext.getImplementationObject(true);
+            Object instance = componentContext.getImplementationObject(true);
             result = modifiedMethod.invoke( instance,
-                    componentContext, -1, MethodResult.VOID, this );
+                    new ActivateMethod.ActivatorParameter( componentContext, -1 ), MethodResult.VOID, this );
 
         }
         return result;

@@ -18,12 +18,13 @@
  */
 package org.apache.felix.scr.integration;
 
-import java.lang.reflect.InvocationTargetException;
+import javax.inject.Inject;
 
 import junit.framework.TestCase;
-import org.apache.felix.scr.integration.components.Felix4350Component;
+import org.apache.felix.scr.Component;
 import org.apache.felix.scr.integration.components.SimpleComponent;
 import org.apache.felix.scr.integration.components.SimpleComponent2;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.junit.JUnit4TestRunner;
@@ -31,7 +32,7 @@ import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceFactory;
 import org.osgi.framework.ServiceRegistration;
-import org.osgi.service.component.runtime.dto.ComponentDescriptionDTO;
+import org.osgi.service.component.ComponentInstance;
 
 /**
  * This test validates the FELIX-4350 issue.
@@ -49,90 +50,71 @@ public class Felix4350Test extends ComponentTestBase
     }
 
     @Test
-    public void test_unbind_while_activating_single_static() throws Exception
+    public void test_unbind_while_activating_single_static()
     {
         doTest("SingleStatic");
     }
 
     @Test
-    public void test_unbind_while_activating_single_dynamic() throws Exception
+    public void test_unbind_while_activating_single_dynamic()
     {
         doTest("SingleDynamic");
     }
 
     @Test
-    public void test_unbind_while_activating_multiple_dynamic() throws Exception
+    public void test_unbind_while_activating_multiple_dynamic()
     {
         doTest("MultipleDynamic");
     }
 
     @Test
-    public void test_unbind_while_activating_multiple_static_greedy() throws Exception
+    public void test_unbind_while_activating_multiple_static_greedy()
     {
         doTest("MultipleStaticGreedy");
     }
 
     @Test
-    public void test_unbind_while_activating_multiple_static_reluctant() throws Exception
+    public void test_unbind_while_activating_multiple_static_reluctant()
     {
         doTest("MultipleStaticReluctant");
     }
 
-    protected void doTest(String componentName) throws Exception
+    protected void doTest(String componentName)
     {
-        ServiceRegistration dep1Reg = register(new SimpleComponent(), 0);
-        ServiceRegistration dep2Reg = register(new SimpleComponent2(), 1000);
-        
-        final ComponentDescriptionDTO main = findComponentDescriptorByName(componentName);
+        final Component main = findComponentByName(componentName);
         TestCase.assertNotNull(main);
 
-        asyncEnable(main); //needs to be async
-        delay(300); //dep2 getService has not yet returned
+        ServiceRegistration dep1Reg = register(new SimpleComponent(), 0);
+        ServiceRegistration dep2Reg = register(new SimpleComponent2(), 1000);
+        main.enable();
+        delay(300);
         dep1Reg.unregister();
-        delay(2000); //dep2 getService has returned
+        delay(2000);
 
-        Felix4350Component.check(0, 0, false);
+        ComponentInstance mainCompInst = main.getComponentInstance();
+        TestCase.assertNull(mainCompInst);
 
         dep1Reg = register(new SimpleComponent(), 0);
         delay(300);
 
-        Felix4350Component.check(1, 0, true);
+        mainCompInst = main.getComponentInstance();
+        TestCase.assertNotNull(mainCompInst);
 
-        disableAndCheck(main);  //does not need to be asyncv??
+        main.disable();
         dep1Reg.unregister();
         dep2Reg.unregister();
 
-        Felix4350Component.check(1, 1, false);
         dep1Reg = register(new SimpleComponent(), 0);
         dep2Reg = register(new SimpleComponent2(), 1000);
-        Felix4350Component.check(1, 1, false);
-        
-        asyncEnable(main); //needs to be async
+        main.enable();
         delay(300);
         dep1Reg.unregister();
         delay(100);
         dep1Reg = register(new SimpleComponent(), 0);
         delay(2000);
 
-        Felix4350Component.check(2, 1, true); //n.b. counts are cumulative
-    }
-    
-    protected void asyncEnable( final ComponentDescriptionDTO cd ) throws Exception
-    {
-    	new Thread( new Runnable() {
-
-			public void run() {
-				try
-                {
-                    enableAndCheck( cd );
-                }
-                catch (InvocationTargetException e)
-                {
-                }
-                catch (InterruptedException e)
-                {
-                }
-			}}).start();
+        mainCompInst = main.getComponentInstance();
+        TestCase.assertNotNull(mainCompInst);
     }
 
     protected ServiceRegistration register(final Object service, final int delay) {

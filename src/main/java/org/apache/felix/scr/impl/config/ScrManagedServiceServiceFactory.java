@@ -18,7 +18,7 @@
  */
 package org.apache.felix.scr.impl.config;
 
-import org.apache.felix.scr.impl.helper.SimpleLogger;
+import org.apache.felix.scr.impl.Activator;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.ServiceFactory;
 import org.osgi.framework.ServiceRegistration;
@@ -36,18 +36,16 @@ import org.osgi.service.log.LogService;
  * core OSGi API and thus may be instantiated without the Configuration Admin
  * and/or MetaType Service API actually available at the time of instantiation.
  */
-public class ScrManagedServiceServiceFactory implements ServiceFactory<ScrManagedService>
+public class ScrManagedServiceServiceFactory implements ServiceFactory
 {
-    private final ScrConfigurationImpl scrConfiguration;
-    private final SimpleLogger logger;
+    private final ScrConfiguration scrConfiguration;
 
-    public ScrManagedServiceServiceFactory(final ScrConfigurationImpl scrConfiguration, final SimpleLogger logger)
+    public ScrManagedServiceServiceFactory(final ScrConfiguration scrConfiguration)
     {
         this.scrConfiguration = scrConfiguration;
-        this.logger = logger;
     }
 
-    public ScrManagedService getService(Bundle bundle, ServiceRegistration<ScrManagedService> registration)
+    public Object getService(Bundle bundle, ServiceRegistration registration)
     {
         try
         {
@@ -56,16 +54,17 @@ public class ScrManagedServiceServiceFactory implements ServiceFactory<ScrManage
         catch ( Throwable t )
         {
             // assume MetaType Service API not available
-            logger
+            Activator
                 .log(
-                    LogService.LOG_INFO,
+                    LogService.LOG_ERROR,
+                    null,
                     "Cannot create MetaType providing ManagedService; not providing Metatype information but just accepting configuration",
-                    null );
+                    t );
         }
         return new ScrManagedService( this.scrConfiguration );
     }
 
-    public void ungetService(Bundle bundle, ServiceRegistration<ScrManagedService> registration, ScrManagedService service)
+    public void ungetService(Bundle bundle, ServiceRegistration registration, Object service)
     {
         // nothing really todo; GC will do the rest
     }

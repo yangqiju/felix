@@ -18,6 +18,9 @@
  */
 package org.apache.felix.scr.integration;
 
+import junit.framework.TestCase;
+
+import org.apache.felix.scr.Component;
 import org.apache.felix.scr.integration.components.SimpleComponent;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -28,14 +31,11 @@ import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationEvent;
 import org.osgi.service.cm.ConfigurationListener;
 import org.osgi.service.cm.ConfigurationPermission;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
-
-import junit.framework.TestCase;
 
 @RunWith(JUnit4TestRunner.class)
 public class LocationTest extends ComponentTestBase
 {
-
+    
     private static final String COMPONENT_NAME = "SimpleComponent.configuration.require";
     private static final String REGION = "?foo";
     private boolean eventReceived;
@@ -44,141 +44,195 @@ public class LocationTest extends ComponentTestBase
     {
         descriptorFile = "/integration_test_simple_components_location.xml";
         // uncomment to enable debugging of this test class
-        //         paxRunnerVmOption = DEBUG_VM_OPTION;
+//         paxRunnerVmOption = DEBUG_VM_OPTION;
     }
 
-    /*
-     * tests that ds does not override a dynamic (null) location binding.
-     */
+
     @Test
     public void testLocationBinding() throws Exception
     {
         final String pid = COMPONENT_NAME;
+        final Component component = findComponentByName( pid );
+
         deleteConfig( pid );
         delay();
-        checkConfigurationCount( pid, 0, -1 );
+
+        TestCase.assertNotNull( component );
+        TestCase.assertFalse( component.isDefaultEnabled() );
+
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+        TestCase.assertNull( SimpleComponent.INSTANCE );
+
+        component.enable();
+        delay();
+
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         Configuration config = configure( pid );
         delay();
 
-        findComponentConfigurationByName( pid, ComponentConfigurationDTO.ACTIVE );
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
         TestCase.assertEquals( PROP_NAME, SimpleComponent.INSTANCE.getProperty( PROP_NAME ) );
-
-        //dynamic (null) bundle location not overridden by ds, so all bundles can use the config.
+        
+        
         Bundle b2 = installBundle( descriptorFile, COMPONENT_PACKAGE, "simplecomponent2", "0.0.11", null );
         b2.start();
-        checkConfigurationCount( b2, pid, 1, -1 );
-
+        Component[] components = findComponentsByName( pid );
+        TestCase.assertEquals( 2, components.length );
+        Component c2 = components[0] == component? components[1]: components[0];
+        
+        c2.enable();
+        delay();
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, c2.getState() );
+        
         bundle.stop();
         delay();
+        
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, c2.getState() );
 
-        checkConfigurationCount( b2, pid, 1, -1 );
-
-        ConfigurationListener listener = new ConfigurationListener()
-        {
+        ConfigurationListener listener = new ConfigurationListener() {
 
             public void configurationEvent(ConfigurationEvent event)
             {
-                if ( event.getType() == ConfigurationEvent.CM_LOCATION_CHANGED )
+                if (event.getType() == ConfigurationEvent.CM_LOCATION_CHANGED)
                 {
                     eventReceived = true;
                 }
             }
-
+            
         };
-        ServiceRegistration<ConfigurationListener> sr = bundleContext.registerService( ConfigurationListener.class,
-            listener, null );
+        ServiceRegistration<ConfigurationListener> sr = bundleContext.registerService( ConfigurationListener.class, listener, null );
         config.setBundleLocation( null );
         delay();
-
+        
         if ( eventReceived )
         {
-            checkConfigurationCount( b2, pid, 1, ComponentConfigurationDTO.ACTIVE );
+            TestCase.assertEquals( Component.STATE_ACTIVE, c2.getState() );
         }
-
+        
         sr.unregister();
-
+        
+        
     }
 
     @Test
     public void testLocationChangeToRegionBinding() throws Exception
     {
         final String pid = COMPONENT_NAME;
-        checkConfigurationCount( pid, 0, -1 );
+        final Component component = findComponentByName( pid );
+
+        deleteConfig( pid );
+        delay();
+
+        TestCase.assertNotNull( component );
+        TestCase.assertFalse( component.isDefaultEnabled() );
+
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+        TestCase.assertNull( SimpleComponent.INSTANCE );
+
+        component.enable();
+        delay();
+
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         Configuration config = configure( pid );
         delay();
 
-        findComponentConfigurationByName( pid, ComponentConfigurationDTO.ACTIVE );
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
         TestCase.assertEquals( PROP_NAME, SimpleComponent.INSTANCE.getProperty( PROP_NAME ) );
-
+        
+        
         Bundle b2 = installBundle( descriptorFile, COMPONENT_PACKAGE, "simplecomponent2", "0.0.11", null );
         b2.start();
-        checkConfigurationCount( b2, pid, 1, -1 );
-
+        Component[] components = findComponentsByName( pid );
+        TestCase.assertEquals( 2, components.length );
+        Component c2 = components[0] == component? components[1]: components[0];
+        
+        c2.enable();
+        delay();
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, c2.getState() );
+        
         bundle.stop();
         delay();
+        
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, c2.getState() );
 
-        checkConfigurationCount( b2, pid, 1, -1 );
-
-        ConfigurationListener listener = new ConfigurationListener()
-        {
+        ConfigurationListener listener = new ConfigurationListener() {
 
             public void configurationEvent(ConfigurationEvent event)
             {
-                if ( event.getType() == ConfigurationEvent.CM_LOCATION_CHANGED )
+                if (event.getType() == ConfigurationEvent.CM_LOCATION_CHANGED)
                 {
                     eventReceived = true;
                 }
             }
-
+            
         };
-        ServiceRegistration<ConfigurationListener> sr = bundleContext.registerService( ConfigurationListener.class,
-            listener, null );
+        ServiceRegistration<ConfigurationListener> sr = bundleContext.registerService( ConfigurationListener.class, listener, null );
         config.setBundleLocation( REGION );
         delay();
-
+        
         if ( eventReceived )
         {
-            checkConfigurationCount( b2, pid, 1, ComponentConfigurationDTO.ACTIVE );
+            TestCase.assertEquals( Component.STATE_ACTIVE, c2.getState() );
         }
-
+        
         sr.unregister();
-
+        
+        
     }
-
+    
     @Test
     public void testRegionBinding() throws Exception
     {
         try
         {
-            new ConfigurationPermission( REGION, ConfigurationPermission.TARGET );
+            new ConfigurationPermission(REGION, ConfigurationPermission.TARGET);
         }
-        catch ( IllegalArgumentException e )
+        catch (IllegalArgumentException e)
         {
             return;//not an R5 CA
         }
-
+        
         final String pid = COMPONENT_NAME;
+        final Component component = findComponentByName( pid );
+
         deleteConfig( pid );
-        checkConfigurationCount( pid, 0, -1 );
+        delay();
+
+        TestCase.assertNotNull( component );
+        TestCase.assertFalse( component.isDefaultEnabled() );
+
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+        TestCase.assertNull( SimpleComponent.INSTANCE );
+
+        component.enable();
+        delay();
+
+        TestCase.assertEquals( Component.STATE_UNSATISFIED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         Configuration config = configure( pid, REGION );
         delay();
 
-        findComponentConfigurationByName( pid, ComponentConfigurationDTO.ACTIVE );
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
         TestCase.assertEquals( PROP_NAME, SimpleComponent.INSTANCE.getProperty( PROP_NAME ) );
-
+        
+        
         Bundle b2 = installBundle( descriptorFile, COMPONENT_PACKAGE, "simplecomponent2", "0.0.11", null );
         b2.start();
-        checkConfigurationCount( b2, pid, 1, ComponentConfigurationDTO.ACTIVE );
-
+        Component[] components = findComponentsByName( pid );
+        TestCase.assertEquals( 2, components.length );
+        Component c2 = components[0] == component? components[1]: components[0];
+        
+        c2.enable();
+        delay();
+        TestCase.assertEquals( Component.STATE_ACTIVE, c2.getState() );
     }
 
 }

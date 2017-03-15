@@ -16,11 +16,11 @@ import javax.inject.Inject;
 
 import junit.framework.TestCase;
 
+import org.apache.felix.scr.Component;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.junit.JUnit4TestRunner;
 import org.osgi.framework.BundleContext;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
 
 @RunWith(JUnit4TestRunner.class)
 public class ComponentConcurrencyTest extends ComponentTestBase
@@ -31,15 +31,10 @@ public class ComponentConcurrencyTest extends ComponentTestBase
 //        paxRunnerVmOption = DEBUG_VM_OPTION;
         descriptorFile = "/integration_test_component_concurrency.xml";
         COMPONENT_PACKAGE = COMPONENT_PACKAGE + ".concurrency";
-        restrictedLogging = true;
-        ignoredWarnings = new String[] {"FrameworkEvent: ERROR",
-        		"FrameworkEvent ERROR",
-        		"Could not get service from ref",
-        		"Failed creating the component instance; see log for reason",
-        		"Cannot create component instance due to failure to bind reference",
-        		"DependencyManager : invokeBindMethod : Service not available from service registry for ServiceReference"};
-        DS_LOGLEVEL = "warn";
     }
+
+    @Inject
+    protected BundleContext bundleContext;
 
     protected static void delay(int secs)
     {
@@ -53,20 +48,31 @@ public class ComponentConcurrencyTest extends ComponentTestBase
     }
 
     @Test
-    public void test_concurrent_component_activation_using_componentFactories() throws Exception
+    public void test_concurrent_component_activation_using_componentFactories()
     {
 
 
-    	ComponentConfigurationDTO ccA = getDisabledConfigurationAndEnable( "org.apache.felix.scr.integration.components.concurrency.AFactory", ComponentConfigurationDTO.ACTIVE );
-    	ComponentConfigurationDTO ccC = getDisabledConfigurationAndEnable( "org.apache.felix.scr.integration.components.concurrency.CFactory", ComponentConfigurationDTO.ACTIVE );
+        final Component AFactory =
+                findComponentByName( "org.apache.felix.scr.integration.components.concurrency.AFactory" );
+        TestCase.assertNotNull( AFactory );
+        AFactory.enable();
+
+        final Component CFactory =
+                findComponentByName( "org.apache.felix.scr.integration.components.concurrency.CFactory" );
+        TestCase.assertNotNull( CFactory );
+        CFactory.enable();
 
         delay( 30 );
-        if ( ! log.foundWarnings().isEmpty() )
+        for ( Iterator it = log.foundWarnings().iterator(); it.hasNext();)
         {
-            TestCase.fail( "unexpected warning or error logged: " + log.foundWarnings() );
-        }
-        for ( String message: log.foundWarnings() )
-        {
+            String message = ( String ) it.next();
+            if ( message.contains( "FrameworkEvent ERROR" ) ||
+                    message.contains( "Could not get service from ref" ) ||
+                    message.contains( "Failed creating the component instance; see log for reason" ) ||
+                    message.contains( "Cannot create component instance due to failure to bind reference" ))
+            {
+                continue;
+            }
             TestCase.fail( "unexpected warning or error logged: " + message );
         }
     }

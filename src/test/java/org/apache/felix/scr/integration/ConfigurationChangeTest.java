@@ -22,6 +22,7 @@ import java.util.Hashtable;
 
 import junit.framework.TestCase;
 
+import org.apache.felix.scr.Component;
 import org.apache.felix.scr.integration.components.SimpleComponent;
 import org.apache.felix.scr.integration.components.SimpleServiceImpl;
 import org.junit.Test;
@@ -32,7 +33,6 @@ import org.osgi.framework.ServiceReference;
 import org.osgi.service.component.ComponentConstants;
 import org.osgi.service.component.ComponentFactory;
 import org.osgi.service.component.ComponentInstance;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
 
 @RunWith(JUnit4TestRunner.class)
 public class ConfigurationChangeTest extends ComponentTestBase
@@ -48,71 +48,77 @@ public class ConfigurationChangeTest extends ComponentTestBase
     }
 
     @Test
-    public void test_optional_single_dynamic() throws Exception
+    public void test_optional_single_dynamic()
     {
         String pid = "test_optional_single_dynamic";
         singleTest( pid, true );
     }
 
     @Test
-    public void test_required_single_dynamic() throws Exception
+    public void test_required_single_dynamic()
     {
         String pid = "test_required_single_dynamic";
         singleTest( pid, true );
     }
 
     @Test
-    public void test_optional_single_static() throws Exception
+    public void test_optional_single_static()
     {
         String pid = "test_optional_single_static";
         singleTest( pid, false );
     }
 
     @Test
-    public void test_required_single_static() throws Exception
+    public void test_required_single_static()
     {
         String pid = "test_required_single_static";
         singleTest( pid, false );
     }
 
     @Test
-    public void test_optional_single_dynamic_greedy() throws Exception
+    public void test_optional_single_dynamic_greedy()
     {
         String pid = "test_optional_single_dynamic_greedy";
         singleTest( pid, true );
     }
 
     @Test
-    public void test_required_single_dynamic_greedy() throws Exception
+    public void test_required_single_dynamic_greedy()
     {
         String pid = "test_required_single_dynamic_greedy";
         singleTest( pid, true );
     }
 
     @Test
-    public void test_optional_single_static_greedy() throws Exception
+    public void test_optional_single_static_greedy()
     {
         String pid = "test_optional_single_static_greedy";
         singleTest( pid, false );
     }
 
     @Test
-    public void test_required_single_static_greedy() throws Exception
+    public void test_required_single_static_greedy()
     {
         String pid = "test_required_single_static_greedy";
         singleTest( pid, false );
     }
 
-    private void singleTest(String pid, boolean dynamic) throws Exception
+    private void singleTest(String pid, boolean dynamic)
     {
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
         final SimpleServiceImpl srv1 = SimpleServiceImpl.create( bundleContext, "srv1" );
         final SimpleServiceImpl srv2 = SimpleServiceImpl.create( bundleContext, "srv2" );
 
         theConfig.put("ref.target", "(value=srv1)");
         configure( pid );
-        delay();//all cm event to complete
-        
-		getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.ACTIVE);
+        // async enabling
+        component.enable();
+        delay();
+
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         final SimpleComponent comp10 = SimpleComponent.INSTANCE;
         TestCase.assertNotNull( comp10 );
         TestCase.assertEquals( srv1, comp10.m_singleRef );
@@ -144,13 +150,13 @@ public class ConfigurationChangeTest extends ComponentTestBase
             TestCase.assertEquals( 0, comp20.m_singleRefUnbind);
             TestCase.assertEquals( 1, comp10.m_singleRefUnbind);
         }
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertEquals( srv2, comp20.m_singleRef );
         TestCase.assertTrue( comp20.m_multiRef.isEmpty() );
     }
 
     @Test
-    public void test_optional_multiple_dynamic() throws Exception
+    public void test_optional_multiple_dynamic()
     {
         String pid = "test_optional_multiple_dynamic";
         multipleTest( pid, true );
@@ -158,65 +164,70 @@ public class ConfigurationChangeTest extends ComponentTestBase
 
 
     @Test
-    public void test_required_multiple_dynamic() throws Exception
+    public void test_required_multiple_dynamic()
     {
         String pid = "test_required_multiple_dynamic";
         multipleTest( pid, true );
     }
 
     @Test
-    public void test_optional_multiple_static() throws Exception
+    public void test_optional_multiple_static()
     {
         String pid = "test_optional_multiple_static";
         multipleTest( pid, false );
     }
 
     @Test
-    public void test_required_multiple_static() throws Exception
+    public void test_required_multiple_static()
     {
         String pid = "test_required_multiple_static";
         multipleTest( pid, false );
     }
 
     @Test
-    public void test_optional_multiple_dynamic_greedy() throws Exception
+    public void test_optional_multiple_dynamic_greedy()
     {
         String pid = "test_optional_multiple_dynamic_greedy";
         multipleTest( pid, true );
     }
 
     @Test
-    public void test_required_multiple_dynamic_greedy() throws Exception
+    public void test_required_multiple_dynamic_greedy()
     {
         String pid = "test_required_multiple_dynamic_greedy";
         multipleTest( pid, true );
     }
 
     @Test
-    public void test_optional_multiple_static_greedy() throws Exception
+    public void test_optional_multiple_static_greedy()
     {
         String pid = "test_optional_multiple_static_greedy";
         multipleTest( pid, false );
     }
 
     @Test
-    public void test_required_multiple_static_greedy() throws Exception
+    public void test_required_multiple_static_greedy()
     {
         String pid = "test_required_multiple_static_greedy";
         multipleTest( pid, false );
     }
 
-    private void multipleTest(String pid, boolean dynamic) throws Exception
+    private void multipleTest(String pid, boolean dynamic)
     {
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
         final SimpleServiceImpl srv1 = SimpleServiceImpl.create( bundleContext, "srv1" );
         final SimpleServiceImpl srv2 = SimpleServiceImpl.create( bundleContext, "srv2" );
 
         theConfig.put("ref.target", "(value=srv1)");
         configure( pid );
-        delay();//let cm thread finish before enabling.
-        
-        getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.ACTIVE);
+        // async enabling
+        component.enable();
+        delay();
 
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         final SimpleComponent comp10 = SimpleComponent.INSTANCE;
         TestCase.assertNotNull( comp10 );
         TestCase.assertEquals( 1, comp10.m_multiRef.size() );
@@ -248,26 +259,32 @@ public class ConfigurationChangeTest extends ComponentTestBase
             TestCase.assertEquals( 0, comp20.m_multiRefUnbind);
             TestCase.assertEquals( 1, comp10.m_multiRefUnbind);
         }
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertEquals( 1, comp20.m_multiRef.size() );
         TestCase.assertEquals( srv2, comp20.m_multiRef.iterator().next() );
     }
  
     //I'm not sure what should happen in this case, asking on dev list.
 //    @Test
-    public void testSingleDynamicRequiredFactory() throws Exception
+    public void testSingleDynamicRequiredFactory() throws InvalidSyntaxException
     {
         String pid = "test_required_single_dynamic_factory";
         final String factoryPid = "factory_" + pid;
         boolean dynamic = true;
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
 
         final SimpleServiceImpl srv1 = SimpleServiceImpl.create( bundleContext, "srv1" );
         final SimpleServiceImpl srv2 = SimpleServiceImpl.create( bundleContext, "srv2" );
 
         theConfig.put("ref.target", "(value=srv1)");
         configure( pid );
+        // async enabling
+        component.enable();
+        delay();
 
-        getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.ACTIVE); //?????? Not clear what should happen.
+        TestCase.assertEquals( Component.STATE_FACTORY, component.getState() );
         
         // create a component instance
         final ServiceReference[] refs = bundleContext.getServiceReferences( ComponentFactory.class.getName(), "("
@@ -316,7 +333,7 @@ public class ConfigurationChangeTest extends ComponentTestBase
             TestCase.assertEquals( 0, comp20.m_singleRefUnbind);
             TestCase.assertEquals( 1, comp10.m_singleRefUnbind);
         }
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertEquals( srv2, comp20.m_singleRef );
         TestCase.assertTrue( comp20.m_multiRef.isEmpty() );
     }

@@ -19,17 +19,17 @@
 package org.apache.felix.scr.impl.manager;
 
 
+import java.util.Arrays;
 import java.util.Dictionary;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.felix.scr.component.ExtComponentContext;
-import org.apache.felix.scr.impl.helper.ComponentServiceObjectsHelper;
+import org.apache.felix.scr.impl.BundleComponentActivator;
 import org.apache.felix.scr.impl.helper.ReadOnlyDictionary;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
-import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.component.ComponentInstance;
 import org.osgi.service.log.LogService;
 
@@ -41,57 +41,32 @@ import org.osgi.service.log.LogService;
 public class ComponentContextImpl<S> implements ExtComponentContext {
 
     private final SingleComponentManager<S> m_componentManager;
-
+    
     private final EdgeInfo[] edgeInfos;
-
-    private final ComponentInstance m_componentInstance = new ComponentInstanceImpl<S>(this);
-
+    
+    private final ComponentInstance m_componentInstance = new ComponentInstanceImpl(this);
+    
     private final Bundle m_usingBundle;
     
-    private volatile ServiceRegistration<S> m_serviceRegistration;
-
-    private volatile S m_implementationObject;
-
+    private final S m_implementationObject;
+    
     private volatile boolean m_implementationAccessible;
-
+    
     private final CountDownLatch accessibleLatch = new CountDownLatch(1);
 
-    private final ComponentServiceObjectsHelper serviceObjectsHelper;
-
-    public ComponentContextImpl( final SingleComponentManager<S> componentManager, final Bundle usingBundle, ServiceRegistration<S> serviceRegistration )
+    ComponentContextImpl( SingleComponentManager<S> componentManager, Bundle usingBundle, S implementationObject )
     {
         m_componentManager = componentManager;
         m_usingBundle = usingBundle;
-        m_serviceRegistration = serviceRegistration;
+        m_implementationObject = implementationObject;
         edgeInfos = new EdgeInfo[componentManager.getComponentMetadata().getDependencies().size()];
         for (int i = 0; i< edgeInfos.length; i++)
         {
             edgeInfos[i] = new EdgeInfo();
         }
-        this.serviceObjectsHelper = new ComponentServiceObjectsHelper(usingBundle.getBundleContext());
     }
     
-    public void unsetServiceRegistration() {
-        m_serviceRegistration = null;
-    }
-
-    public void cleanup()
-    {
-        this.serviceObjectsHelper.cleanup();
-    }
-
-    public ComponentServiceObjectsHelper getComponentServiceObjectsHelper()
-    {
-        return this.serviceObjectsHelper;
-    }
-
-    public void setImplementationObject(S implementationObject)
-    {
-        this.m_implementationObject = implementationObject;
-    }
-
-
-    public void setImplementationAccessible(boolean implementationAccessible)
+    void setImplementationAccessible(boolean implementationAccessible)
     {
         this.m_implementationAccessible = implementationAccessible;
         if (implementationAccessible)
@@ -99,16 +74,11 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
             accessibleLatch.countDown();
         }
     }
-
+    
     EdgeInfo getEdgeInfo(DependencyManager<S, ?> dm)
     {
         int index = dm.getIndex();
         return edgeInfos[index];
-    }
-
-    ServiceRegistration<S> getServiceRegistration()
-    {
-        return m_serviceRegistration;
     }
 
     protected SingleComponentManager<S> getComponentManager()
@@ -119,51 +89,52 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
     public final Dictionary<String, Object> getProperties()
     {
         // 112.12.3.5 The Dictionary is read-only and cannot be modified
-        return new ReadOnlyDictionary( m_componentManager.getProperties() );
+        Dictionary<String, Object> ctxProperties = m_componentManager.getProperties();
+        return new ReadOnlyDictionary<String, Object>( ctxProperties );
     }
 
 
     public Object locateService( String name )
     {
-        m_componentManager.obtainActivationReadLock( );
+        m_componentManager.obtainActivationReadLock( "locate.service.name" );
         try
         {
             DependencyManager<S, ?> dm = m_componentManager.getDependencyManager( name );
-            return ( dm != null ) ? dm.getService(this) : null;
+            return ( dm != null ) ? dm.getService() : null;
         }
         finally
         {
-            m_componentManager.releaseActivationReadLock(  );
+            m_componentManager.releaseActivationReadLock( "locate.service.name" );
         }
     }
 
 
     public Object locateService( String name, ServiceReference ref )
     {
-        m_componentManager.obtainActivationReadLock(  );
+        m_componentManager.obtainActivationReadLock( "locate.service.ref" );
         try
         {
             DependencyManager<S, ?> dm = m_componentManager.getDependencyManager( name );
-            return ( dm != null ) ? dm.getService( this, ref ) : null;
+            return ( dm != null ) ? dm.getService( ref ) : null;
         }
         finally
         {
-            m_componentManager.releaseActivationReadLock( );
+            m_componentManager.releaseActivationReadLock( "locate.service.ref" );
         }
     }
 
 
     public Object[] locateServices( String name )
     {
-        m_componentManager.obtainActivationReadLock(  );
+        m_componentManager.obtainActivationReadLock( "locate.services" );
         try
         {
-            DependencyManager<S, ?> dm = m_componentManager.getDependencyManager( name );
-            return ( dm != null ) ? dm.getServices(this) : null;
+            DependencyManager dm = m_componentManager.getDependencyManager( name );
+            return ( dm != null ) ? dm.getServices() : null;
         }
         finally
         {
-            m_componentManager.releaseActivationReadLock( );
+            m_componentManager.releaseActivationReadLock( "locate.services" );
         }
     }
 
@@ -188,7 +159,7 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
 
     public void enableComponent( String name )
     {
-        ComponentActivator activator = m_componentManager.getActivator();
+        BundleComponentActivator activator = m_componentManager.getActivator();
         if ( activator != null )
         {
             activator.enableComponent( name );
@@ -198,7 +169,7 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
 
     public void disableComponent( String name )
     {
-        ComponentActivator activator = m_componentManager.getActivator();
+        BundleComponentActivator activator = m_componentManager.getActivator();
         if ( activator != null )
         {
             activator.disableComponent( name );
@@ -208,17 +179,17 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
 
     public ServiceReference<S> getServiceReference()
     {
-        return m_serviceRegistration == null? null: m_serviceRegistration.getReference();
+        return m_componentManager.getServiceReference();
     }
 
 
     //---------- Speculative MutableProperties interface ------------------------------
 
-    public void setServiceProperties(Dictionary<String, ?> properties)
+    public void setServiceProperties(Dictionary properties)
     {
         getComponentManager().setServiceProperties(properties );
     }
-
+    
     //---------- ComponentInstance interface support ------------------------------
 
     S getImplementationObject( boolean requireAccessible )
@@ -252,12 +223,12 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
         }
         return null;
     }
-
-    private static class ComponentInstanceImpl<S> implements ComponentInstance
+    
+    private static class ComponentInstanceImpl implements ComponentInstance
     {
-        private final ComponentContextImpl<S> m_componentContext;
+        private final ComponentContextImpl m_componentContext;
 
-        private ComponentInstanceImpl(ComponentContextImpl<S> m_componentContext)
+        private ComponentInstanceImpl(ComponentContextImpl m_componentContext)
         {
             this.m_componentContext = m_componentContext;
         }
@@ -275,5 +246,4 @@ public class ComponentContextImpl<S> implements ExtComponentContext {
         }
 
     }
-
 }

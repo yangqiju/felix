@@ -16,23 +16,70 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
+
 package org.apache.felix.scr.impl.helper;
 
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
 import org.apache.felix.scr.impl.metadata.ComponentMetadata;
+import org.apache.felix.scr.impl.metadata.ReferenceMetadata;
+
 
 /**
- * @version $Rev$ $Date$
+ * @version $Rev:$ $Date:$
  */
-public interface ComponentMethods
+public class ComponentMethods
 {
-    void initComponentMethods( ComponentMetadata componentMetadata, Class<?> implementationObjectClass );
+    private ActivateMethod m_activateMethod;
+    private ModifiedMethod m_modifiedMethod;
+    private DeactivateMethod m_deactivateMethod;
 
-    ComponentMethod getActivateMethod();
+    private final Map bindMethodMap = new HashMap();//<String, BindMethods>
 
-    ComponentMethod getDeactivateMethod();
+    public synchronized void initComponentMethods( ComponentMetadata componentMetadata, Class implementationObjectClass )
+    {
+        if (m_activateMethod != null)
+        {
+            return;
+        }
+        boolean isDS11 = componentMetadata.isDS11();
+        boolean isDS12Felix = componentMetadata.isDS12Felix();
+        m_activateMethod = new ActivateMethod( componentMetadata.getActivate(), componentMetadata
+                .isActivateDeclared(), implementationObjectClass, isDS11, isDS12Felix );
+        m_deactivateMethod = new DeactivateMethod( componentMetadata.getDeactivate(),
+                componentMetadata.isDeactivateDeclared(), implementationObjectClass, isDS11, isDS12Felix );
 
-    ComponentMethod getModifiedMethod();
+        m_modifiedMethod = new ModifiedMethod( componentMetadata.getModified(), implementationObjectClass, isDS11, isDS12Felix );
 
-    ReferenceMethods getBindMethods(String refName );
+        for ( ReferenceMetadata referenceMetadata: componentMetadata.getDependencies() )
+        {
+            String refName = referenceMetadata.getName();
+            BindMethods bindMethods = new BindMethods( referenceMetadata, implementationObjectClass, isDS11, isDS12Felix);
+            bindMethodMap.put( refName, bindMethods );
+        }
+    }
+
+    public ActivateMethod getActivateMethod()
+    {
+        return m_activateMethod;
+    }
+
+    public DeactivateMethod getDeactivateMethod()
+    {
+        return m_deactivateMethod;
+    }
+
+    public ModifiedMethod getModifiedMethod()
+    {
+        return m_modifiedMethod;
+    }
+
+    public BindMethods getBindMethods(String refName )
+    {
+        return ( BindMethods ) bindMethodMap.get( refName );
+    }
 
 }

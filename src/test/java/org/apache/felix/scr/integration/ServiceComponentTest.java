@@ -20,16 +20,20 @@ package org.apache.felix.scr.integration;
 
 
 import java.io.IOException;
+import java.util.Dictionary;
+import java.util.Hashtable;
 
 import junit.framework.TestCase;
 
+import org.apache.felix.scr.Component;
+import org.apache.felix.scr.impl.config.ScrConfiguration;
 import org.apache.felix.scr.integration.components.SimpleComponent;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.ops4j.pax.exam.junit.JUnit4TestRunner;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
-import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
+import org.osgi.service.cm.Configuration;
 
 
 @RunWith(JUnit4TestRunner.class)
@@ -38,18 +42,25 @@ public class ServiceComponentTest extends ComponentTestBase
     static
     {
         // uncomment to enable debugging of this test class
-//         paxRunnerVmOption = DEBUG_VM_OPTION;
+        // paxRunnerVmOption = DEBUG_VM_OPTION;
     }
 
 
     @Test
-    public void test_SimpleComponent_service() throws Exception
+    public void test_SimpleComponent_service()
     {
         final String pid = "ServiceComponent";
 
         // one single component exists without configuration
-		getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.ACTIVE);
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
+        component.enable();
+        delay();
+
         final SimpleComponent instance = SimpleComponent.INSTANCE;
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( instance );
 
         // assert component properties (all !)
@@ -83,12 +94,20 @@ public class ServiceComponentTest extends ComponentTestBase
 
 
     @Test
-    public void test_DelayedSimpleComponent_service_single_use() throws Exception
+    public void test_DelayedSimpleComponent_service_single_use()
     {
         final String pid = "DelayedServiceComponent";
 
         // one single component exists without configuration
-		getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.SATISFIED);
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
+        component.enable();
+        delay();
+
+        // the delayed service is expected to only be registered before use
+        TestCase.assertEquals( Component.STATE_REGISTERED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         // get the service
@@ -99,7 +118,7 @@ public class ServiceComponentTest extends ComponentTestBase
             final Object theService = bundleContext.getService( reference );
 
             // service must now be active
-            findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+            TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
 
             // and of course we expect the instance
             TestCase.assertEquals( SimpleComponent.INSTANCE, theService );
@@ -110,26 +129,33 @@ public class ServiceComponentTest extends ComponentTestBase
         }
 
         // service is not used anymore, ensure REGISTERED state and INSTANCE==null
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.SATISFIED);
+        TestCase.assertEquals( Component.STATE_REGISTERED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
     }
 
 
     @Test
-    public void test_DelayedSimpleComponent_service_multi_use() throws Exception
+    public void test_DelayedSimpleComponent_service_multi_use()
     {
         final String pid = "DelayedServiceComponent";
 
         // one single component exists without configuration
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
+        component.enable();
+        delay();
+
         // the delayed service is expected to only be registered before use
-		getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.SATISFIED);
+        TestCase.assertEquals( Component.STATE_REGISTERED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         // get the service once
         final ServiceReference reference1 = bundleContext.getServiceReference( "java.lang.Object" );
         TestCase.assertNotNull( reference1 );
         bundleContext.getService( reference1 );
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
 
         // get the service a second time
@@ -137,30 +163,46 @@ public class ServiceComponentTest extends ComponentTestBase
         final ServiceReference reference2 = bundleContext2.getServiceReference( "java.lang.Object" );
         TestCase.assertNotNull( reference2 );
         bundleContext2.getService( reference2 );
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
 
         // unget the service once -- must still be active !
         bundleContext2.ungetService( reference2 );
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
 
         // unget the service second time -- must be registered and null now
         bundleContext.ungetService( reference1 );
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.SATISFIED);
+        TestCase.assertEquals( Component.STATE_REGISTERED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
     }
 
     @Test
-    public void test_DelayedSimpleComponent_service_keep_instance() throws Exception
+    public void test_DelayedSimpleComponent_service_keep_instance() throws IOException
     {
         // configure SCR to keep instances
+        Configuration scrConfig = getConfigurationAdmin().getConfiguration( ScrConfiguration.PID, null );
+        Dictionary props = scrConfig.getProperties();
+        if ( props == null )
+        {
+            props = new Hashtable();
+        }
+        props.put( ScrConfiguration.PROP_DELAYED_KEEP_INSTANCES, Boolean.TRUE.toString() );
+        scrConfig.update( props );
+        delay();
 
-        final String pid = "DelayedKeepInstancesServiceComponent";
+        final String pid = "DelayedServiceComponent";
 
         // one single component exists without configuration
+        final Component component = findComponentByName( pid );
+        TestCase.assertNotNull( component );
+        TestCase.assertEquals( Component.STATE_DISABLED, component.getState() );
+
+        component.enable();
+        delay();
+
         // the delayed service is expected to only be registered before use
-		getDisabledConfigurationAndEnable(pid, ComponentConfigurationDTO.SATISFIED);
+        TestCase.assertEquals( Component.STATE_REGISTERED, component.getState() );
         TestCase.assertNull( SimpleComponent.INSTANCE );
 
         // get the service
@@ -171,7 +213,7 @@ public class ServiceComponentTest extends ComponentTestBase
             final Object theService = bundleContext.getService( reference );
 
             // service must now be active
-            findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+            TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
 
             // and of course we expect the instance
             TestCase.assertEquals( SimpleComponent.INSTANCE, theService );
@@ -182,8 +224,10 @@ public class ServiceComponentTest extends ComponentTestBase
         }
 
         // component instance must not be disposed off (due to config)
-        findComponentConfigurationByName(pid, ComponentConfigurationDTO.ACTIVE);
+        TestCase.assertEquals( Component.STATE_ACTIVE, component.getState() );
         TestCase.assertNotNull( SimpleComponent.INSTANCE );
 
+        // delete the SCR configuration again
+        scrConfig.delete();
     }
 }

@@ -19,27 +19,27 @@
 package org.apache.felix.scr.impl.manager;
 
 
-import java.util.ArrayList;
 import java.util.Dictionary;
-import java.util.HashMap;
 import java.util.Hashtable;
-import java.util.List;
-import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.felix.scr.impl.helper.ComponentMethod;
+import org.apache.felix.scr.impl.BundleComponentActivator;
+import org.apache.felix.scr.impl.TargetedPID;
+import org.apache.felix.scr.impl.config.ComponentHolder;
+import org.apache.felix.scr.impl.helper.ActivateMethod.ActivatorParameter;
 import org.apache.felix.scr.impl.helper.ComponentMethods;
 import org.apache.felix.scr.impl.helper.MethodResult;
-import org.apache.felix.scr.impl.metadata.TargetedPID;
+import org.apache.felix.scr.impl.helper.ModifiedMethod;
+import org.apache.felix.scr.impl.metadata.ComponentMetadata;
+import org.apache.felix.scr.impl.metadata.ReferenceMetadata;
 import org.osgi.framework.Bundle;
-import org.osgi.framework.Constants;
 import org.osgi.framework.ServiceFactory;
-import org.osgi.framework.ServiceReference;
 import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.component.ComponentConstants;
+import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.ComponentInstance;
 import org.osgi.service.log.LogService;
-import org.osgi.util.promise.Deferred;
 
 
 /**
@@ -55,38 +55,56 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
     // The context that will be passed to the implementationObject
     private volatile ComponentContextImpl<S> m_componentContext;
 
-    // Merged properties from xml descriptor and all configurations
-    private Map<String, Object> m_configurationProperties;
+    // the component holder responsible for managing this component
+    private final ComponentHolder m_componentHolder;
 
     // optional properties provided in the ComponentFactory.newInstance method
-    private Map<String, Object> m_factoryProperties;
+    private Dictionary<String, Object> m_factoryProperties;
 
     // the component properties, also used as service properties
-    private Map<String, Object> m_properties;
+    private Dictionary<String, Object> m_properties;
 
     // properties supplied ot ExtComponentContext.updateProperties
     // null if properties are not to be overwritten
     private Dictionary<String, Object> m_serviceProperties;
 
+    // the component properties from the Configuration Admin Service
+    // this is null, if none exist or none are provided
+    private Dictionary<String, Object> m_configurationProperties;
+    
+    private volatile long m_changeCount = -1;
+    private TargetedPID m_targetedPID;
+
+
+    private final ThreadLocal<Boolean> m_circularReferences = new ThreadLocal<Boolean>();
+    
    /**
      * The constructor receives both the activator and the metadata
+     *
+     * @param activator
+     * @param metadata
      * @param componentMethods
      */
-    public SingleComponentManager( ComponentContainer<S> container, ComponentMethods componentMethods )
+    public SingleComponentManager( BundleComponentActivator activator, ComponentHolder componentHolder,
+            ComponentMetadata metadata, ComponentMethods componentMethods )
     {
-        this(container, componentMethods, false);
+        this(activator, componentHolder, metadata, componentMethods, false);
+    }
+    
+    public SingleComponentManager( BundleComponentActivator activator, ComponentHolder componentHolder,
+            ComponentMetadata metadata, ComponentMethods componentMethods, boolean factoryInstance )
+    {
+        super( activator, metadata, componentMethods, factoryInstance );
+
+        m_componentHolder = componentHolder;
     }
 
-    public SingleComponentManager( ComponentContainer<S> container, ComponentMethods componentMethods,
-            boolean factoryInstance )
-    {
-        super( container, componentMethods, factoryInstance );
-    }
-
-    @Override
     void clear()
     {
-        m_container.disposed( this );
+        if ( m_componentHolder != null )
+        {
+            m_componentHolder.disposed( this );
+        }
 
         super.clear();
     }
@@ -98,7 +116,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
     // 4. Call the activate method, if present
     // if this method is overwritten, the deleteComponent method should
     // also be overwritten
-    private boolean createComponent(ComponentContextImpl<S> componentContext)
+    protected boolean createComponent()
     {
         if ( !isStateLocked() )
         {
@@ -118,7 +136,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
                 {
                     m_componentContext = null;
                 }
-            }, componentContext );
+            } );
 
             // if something failed creating the component instance, return false
             if ( tmpComponent == null )
@@ -130,7 +148,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             log( LogService.LOG_DEBUG, "Set implementation object for component {0}", new Object[] { getName() },  null );
 
             //notify that component was successfully created so any optional circular dependencies can be retried
-            ComponentActivator activator = getActivator();
+            BundleComponentActivator activator = getActivator();
             if ( activator != null )
             {
                 activator.missingServicePresent( getServiceReference() );
@@ -140,7 +158,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
     }
 
 
-    @Override
     protected void deleteComponent( int reason )
     {
         if ( !isStateLocked() )
@@ -151,7 +168,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         {
             m_useCount.set( 0 );
             disposeImplementationObject( m_componentContext, reason );
-            m_componentContext.cleanup();
             m_componentContext = null;
             log( LogService.LOG_DEBUG, "Unset and deconfigured implementation object for component {0} in deleteComponent for reason {1}", new Object[] { getName(), REASONS[ reason ] },  null );
             clearServiceProperties();
@@ -178,7 +194,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
      *
      * @return the object that implements the services
      */
-    private S getInstance()
+    S getInstance()
     {
         return m_componentContext == null? null: m_componentContext.getImplementationObject( true );
     }
@@ -212,7 +228,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
     }
 
 
-    protected S createImplementationObject( Bundle usingBundle, SetImplementationObject<S> setter, ComponentContextImpl<S> componentContext )
+    protected S createImplementationObject( Bundle usingBundle, SetImplementationObject setter )
     {
         final Class<S> implementationObjectClass;
         final S implementationObject;
@@ -242,15 +258,15 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             log( LogService.LOG_ERROR, "Error during instantiation of the implementation object", t );
             return null;
         }
-
-        componentContext.setImplementationObject(implementationObject);
+        
+        ComponentContextImpl componentContext = new ComponentContextImpl(this, usingBundle, implementationObject);
 
         // 3. set the implementation object prematurely
         setter.presetComponentContext( componentContext );
 
         // 4. Bind the target services
 
-        ReferenceManager<S, ?> failedDm = null;
+        DependencyManager<S, ?> failedDm = null;
         for ( DependencyManager<S, ?> dm: getDependencyManagers())
         {
             if ( failedDm == null )
@@ -258,10 +274,10 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
                 // if a dependency turned unresolved since the validation check,
                 // creating the instance fails here, so we deactivate and return
                 // null.
-                boolean open = dm.open( componentContext, componentContext.getEdgeInfo( dm ) );
+                boolean open = dm.open( implementationObject, componentContext.getEdgeInfo( dm ) );
                 if ( !open )
                 {
-                    log( LogService.LOG_DEBUG, "Cannot create component instance due to failure to bind reference {0}",
+                    log( LogService.LOG_ERROR, "Cannot create component instance due to failure to bind reference {0}",
                             new Object[] { dm.getName() }, null );
 
                     failedDm = dm;
@@ -277,7 +293,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         {
             // make sure, we keep no bindings. Only close the dm's we opened.
             boolean skip = true;
-            for ( DependencyManager<S, ?> md: getReversedDependencyManagers() )
+            for ( DependencyManager md: getReversedDependencyManagers() )
             {
                 if ( skip && failedDm == md )
                 {
@@ -285,25 +301,26 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
                 }
                 if ( !skip )
                 {
-                    md.close( componentContext, componentContext.getEdgeInfo( md ) );
+                    md.close( implementationObject, componentContext.getEdgeInfo( md ) );
                 }
                 md.deactivate();
             }
             setter.resetImplementationObject( implementationObject );
+            unsetDependenciesCollected();
             return null;
 
         }
 
         // 5. Call the activate method, if present
-        final MethodResult result = getComponentMethods().getActivateMethod().invoke( implementationObject,
-                componentContext, 1, null, this );
+        final MethodResult result = getComponentMethods().getActivateMethod().invoke( implementationObject, new ActivatorParameter(
+                componentContext, 1 ), null, this );
         if ( result == null )
         {
             // 112.5.8 If the activate method throws an exception, SCR must log an error message
             // containing the exception with the Log Service and activation fails
-            for ( DependencyManager<S, ?> md: getReversedDependencyManagers() )
+            for ( DependencyManager md: getReversedDependencyManagers() )
             {
-                md.close( componentContext, componentContext.getEdgeInfo( md ) );
+                md.close( implementationObject, componentContext.getEdgeInfo( md ) );
             }
 
             // make sure the implementation object is not available
@@ -314,15 +331,9 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         else
         {
             componentContext.setImplementationAccessible( true );
-            ComponentActivator activator = getActivator();
-            if ( activator != null )
-            {
-                //call to leaveCreate must be done here since the change in service properties may cause a getService,
-                //so the threadLocal must be cleared first.
-                activator.leaveCreate(getServiceReference());
-            }
+            m_circularReferences.remove();
             //this may cause a getService as properties now match a filter.
-            setServiceProperties( result, null );
+            setServiceProperties( result );
         }
 
         return implementationObject;
@@ -342,67 +353,70 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             // method throws an exception, SCR must log an error message containing the
             // exception with the Log Service and continue) has already been logged
             final MethodResult result = getComponentMethods().getDeactivateMethod().invoke( implementationObject,
-                    componentContext, reason, null, this );
+                    new ActivatorParameter( componentContext, reason ), null, this );
             if ( result != null )
             {
-                setServiceProperties( result, null );
+                setServiceProperties( result );
             }
             // 2. Unbind any bound services
-            for ( DependencyManager<S, ?> md: getReversedDependencyManagers() )
+            for ( DependencyManager md: getReversedDependencyManagers() )
             {
-                md.close( componentContext, componentContext.getEdgeInfo( md ) );
+                md.close( implementationObject, componentContext.getEdgeInfo( md ) );
             }
         }
 
     }
 
-    @Override
     boolean hasInstance()
     {
         return m_componentContext != null;
     }
 
-    @Override
-    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> refPair, int trackingCount )
+    <T> void invokeBindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> refPair, int trackingCount )
     {
         ComponentContextImpl<S> componentContext = m_componentContext;
         if ( componentContext != null )
         {
+            final S impl = componentContext.getImplementationObject( false );
             EdgeInfo info = componentContext.getEdgeInfo( dependencyManager );
-            dependencyManager.invokeBindMethod( componentContext, refPair, trackingCount, info );
+            dependencyManager.invokeBindMethod( impl, refPair, trackingCount, info );
         }
     }
 
-    @Override
-    <T> boolean invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> refPair, int trackingCount )
-    {
-        final ComponentContextImpl<S> componentContext = m_componentContext;
-        if ( componentContext != null )
-        {
-            final EdgeInfo info = componentContext.getEdgeInfo( dependencyManager );
-            return dependencyManager.invokeUpdatedMethod( componentContext, refPair, trackingCount, info );
-        }
-        return false;
-    }
-
-    @Override
-    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<S, T> oldRefPair, int trackingCount )
+    <T> void invokeUpdatedMethod( DependencyManager<S, T> dependencyManager, RefPair<T> refPair, int trackingCount )
     {
         ComponentContextImpl<S> componentContext = m_componentContext;
         if ( componentContext != null )
         {
+            final S impl = componentContext.getImplementationObject( false );
             EdgeInfo info = componentContext.getEdgeInfo( dependencyManager );
-            dependencyManager.invokeUnbindMethod( componentContext, oldRefPair, trackingCount, info );
+            dependencyManager.invokeUpdatedMethod( impl, refPair, trackingCount, info );
         }
     }
 
-    protected void setFactoryProperties( Dictionary<String, ?> dictionary )
+    <T> void invokeUnbindMethod( DependencyManager<S, T> dependencyManager, RefPair<T> oldRefPair, int trackingCount )
     {
-        m_factoryProperties = copyToMap( dictionary, true );
+        ComponentContextImpl<S> componentContext = m_componentContext;
+        if ( componentContext != null )
+        {
+            final S impl = componentContext.getImplementationObject( false );
+            EdgeInfo info = componentContext.getEdgeInfo( dependencyManager );
+            dependencyManager.invokeUnbindMethod( impl, oldRefPair, trackingCount, info );
+        }
+    }
+
+    protected void setFactoryProperties( Dictionary<String, Object> dictionary )
+    {
+        m_factoryProperties = copyTo( null, dictionary );
     }
 
 
-    @Override
+    public boolean hasConfiguration()
+    {
+        return m_configurationProperties != null;
+    }
+
+
     void registerComponentId()
     {
         super.registerComponentId();
@@ -410,7 +424,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
     }
 
 
-    @Override
     void unregisterComponentId()
     {
         super.unregisterComponentId();
@@ -425,54 +438,34 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
      * Method implements the Component Properties provisioning as described
      * in 112.6, Component Properties.
      *
-     * @return a private map of component properties
+     * @return a private Hashtable of component properties
      */
-    @Override
-    public Map<String, Object> getProperties()
+    public Dictionary<String, Object> getProperties()
     {
 
         if ( m_properties == null )
         {
 
+            // 1. the properties from the component descriptor
+            Dictionary<String, Object> props = copyTo( null, getComponentMetadata().getProperties() );
 
-            // 1. Merge all the config properties
-            Map<String, Object> props = new HashMap<String, Object>();
-            if ( m_configurationProperties != null )
+            // 2. add target properties of references
+            // 112.6 Component Properties, target properties (p. 302)
+            for ( ReferenceMetadata rm : getComponentMetadata().getDependencies() )
             {
-                props.putAll(m_configurationProperties);
-            }
-            if ( m_factoryProperties != null)
-            {
-                props.putAll(m_factoryProperties);
-                if (getComponentMetadata().getDSVersion().isDS13() && m_factoryProperties.containsKey(Constants.SERVICE_PID))
+                if ( rm.getTarget() != null )
                 {
-                    final List<String> servicePids = new ArrayList<String>();
-                    final Object configPropServicePids = m_configurationProperties.get(Constants.SERVICE_PID);
-                    if ( configPropServicePids instanceof List )
-                    {
-                        servicePids.addAll((List)configPropServicePids);
-                    }
-                    else
-                    {
-                        servicePids.add(configPropServicePids.toString());
-                    }
-                    if (m_factoryProperties.get(Constants.SERVICE_PID) instanceof String)
-                    {
-                        servicePids.add((String)m_factoryProperties.get(Constants.SERVICE_PID));
-                    }
-
-                    if ( servicePids.size() == 1 )
-                    {
-                        props.put(Constants.SERVICE_PID, servicePids.get(0));
-                    }
-                    else
-                    {
-                        props.put(Constants.SERVICE_PID, servicePids);
-                    }
+                    props.put( rm.getTargetPropertyName(), rm.getTarget() );
                 }
             }
 
-            // 2. set component.name and component.id
+            // 3. overlay with Configuration Admin properties
+            copyTo( props, m_configurationProperties );
+
+            // 4. copy any component factory properties, not supported yet
+            copyTo( props, m_factoryProperties );
+
+            // 5. set component.name and component.id
             props.put( ComponentConstants.COMPONENT_NAME, getComponentMetadata().getName() );
             props.put( ComponentConstants.COMPONENT_ID, getId() );
 
@@ -482,8 +475,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         return m_properties;
     }
 
-    @Override
-    public void setServiceProperties( Dictionary<String, ?> serviceProperties )
+    public void setServiceProperties( Dictionary<String, Object> serviceProperties )
     {
         if ( serviceProperties == null || serviceProperties.isEmpty() )
         {
@@ -491,7 +483,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         }
         else
         {
-            m_serviceProperties = copyToDictionary( serviceProperties, false );
+            m_serviceProperties = copyTo( null, serviceProperties, false );
             // set component.name and component.id
             m_serviceProperties.put( ComponentConstants.COMPONENT_NAME, getComponentMetadata().getName() );
             m_serviceProperties.put( ComponentConstants.COMPONENT_ID, getId() );
@@ -500,25 +492,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         updateServiceRegistration();
     }
 
-    @Override
-    void postRegister()
-    {
-        if (m_serviceProperties != null)
-        {
-            updateServiceRegistration();
-        }
-    }
-
-    @Override
-    void preDeregister()
-    {
-        if (m_componentContext != null)
-        {
-            m_componentContext.unsetServiceRegistration();
-        }        
-    }
-
-    @Override
     public Dictionary<String, Object> getServiceProperties()
     {
         if ( m_serviceProperties != null )
@@ -528,25 +501,9 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         return super.getServiceProperties();
     }
 
-    final ServiceRegistration<S> getServiceRegistration()
-    {
-        return m_componentContext == null? null: m_componentContext.getServiceRegistration();
-    }
-
-
-    final ServiceReference<S> getServiceReference()
-    {
-        ServiceRegistration<S> reg = getServiceRegistration();
-        if (reg != null)
-        {
-            return reg.getReference();
-        }
-        return null;
-    }
-
     private void updateServiceRegistration()
     {
-        ServiceRegistration<S> sr = getServiceRegistration();
+        ServiceRegistration<?> sr = getServiceRegistration();
         if ( sr != null )
         {
             try
@@ -556,10 +513,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
                 if ( !servicePropertiesMatches( sr, regProps ) )
                 {
                     sr.setProperties( regProps );
-                }
-                else
-                {
-                    log( LogService.LOG_DEBUG, "Not updating service registration, no change in properties", null, null );
                 }
             }
             catch ( IllegalStateException ise )
@@ -575,10 +528,6 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             {
                 log( LogService.LOG_ERROR, "Unexpected problem when updating service registration", t );
             }
-        }
-        else
-        {
-            log( LogService.LOG_DEBUG, "No service registration to update", null, null );
         }
     }
 
@@ -597,30 +546,51 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
      * @param configuration The configuration properties for the component from
      *                      the Configuration Admin Service or <code>null</code> if there is
      *                      no configuration or if the configuration has just been deleted.
-     * @param configurationDeleted TODO
-     * @param factoryPid TODO
+     * @param changeCount Change count for the configuration
+     * @param targetedPID TargetedPID for the configuration
      */
-    @Override
-    public void reconfigure( Map<String, Object> configuration, boolean configurationDeleted, TargetedPID factoryPid)
+    public void reconfigure( Dictionary<String, Object> configuration, long changeCount, TargetedPID targetedPID )
     {
-        // store the properties
-        m_configurationProperties = configuration;
-
-        reconfigure(configurationDeleted);
-    }
-
-    void reconfigure(boolean configurationDeleted)
-    {
-        Deferred<Void> enableLatch = enableLatchWait();
+        CountDownLatch enableLatch = enableLatchWait();
         try
         {
+            if ( targetedPID == null || !targetedPID.equals( m_targetedPID ) )
+            {
+                m_targetedPID = targetedPID;
+                m_changeCount = -1;
+            }
+            if ( configuration != null )
+            {
+                if ( changeCount <= m_changeCount )
+                {
+                    log( LogService.LOG_DEBUG,
+                            "ImmediateComponentHolder out of order configuration updated for pid {0} with existing count {1}, new count {2}",
+                            new Object[] { getConfigurationPid(), m_changeCount, changeCount }, null );
+                    return;
+                }
+                m_changeCount = changeCount;
+            }
+            else 
+            {
+                m_changeCount = -1;
+            }
+            // nothing to do if there is no configuration (see FELIX-714)
+            if ( configuration == null && m_configurationProperties == null )
+            {
+                log( LogService.LOG_DEBUG, "No configuration provided (or deleted), nothing to do", null );
+                return;
+            }
+
+            // store the properties
+            m_configurationProperties = configuration;
+
             // clear the current properties to force using the configuration data
             m_properties = null;
 
 
             // reactivate the component to ensure it is provided with the
             // configuration data
-            if ( !getState().isEnabled() )
+            if ( m_disposed || !m_internalEnabled )
             {
                 // nothing to do for inactive components, leave this method
                 log( LogService.LOG_DEBUG, "Component can not be activated since it is in state {0}", new Object[] { getState() }, null );
@@ -628,69 +598,70 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
                 return;
             }
 
+            // if the configuration has been deleted but configuration is required
+            // this component must be deactivated
+            if ( configuration == null && getComponentMetadata().isConfigurationRequired() )
+            {
+                //deactivate and remove service listeners
+                deactivateInternal( ComponentConstants.DEACTIVATION_REASON_CONFIGURATION_DELETED, true, false );
+                //do not reset targets as that will reinstall the service listeners which may activate the component.
+                //when a configuration arrives the properties will get set based on the new configuration.
+                return;
+            }
+
             // unsatisfied component and non-ignored configuration may change targets
             // to satisfy references
-            obtainActivationWriteLock( );
+            obtainActivationWriteLock( "reconfigure" );
             try
             {
-                if ( !getState().isSatisfied() && !getComponentMetadata().isConfigurationIgnored() )
+                if ( getState() == STATE_UNSATISFIED
+                        && !getComponentMetadata().isConfigurationIgnored() )
                 {
                     log( LogService.LOG_DEBUG, "Attempting to activate unsatisfied component", null );
                     updateTargets( getProperties() );
-                    releaseActivationWriteeLock(  );
-                    activateInternal( );
+                    releaseActivationWriteeLock( "reconfigure.unsatisfied" );
+                    activateInternal( getTrackingCount().get() );
                     return;
                 }
 
-                if ( !modify(configurationDeleted) )
+                if ( !modify() )
                 {
                     // SCR 112.7.1 - deactivate if configuration is deleted or no modified method declared
                     log( LogService.LOG_DEBUG, "Deactivating and Activating to reconfigure from configuration", null );
-                    int reason = configurationDeleted ? ComponentConstants.DEACTIVATION_REASON_CONFIGURATION_DELETED
+                    int reason = ( configuration == null ) ? ComponentConstants.DEACTIVATION_REASON_CONFIGURATION_DELETED
                             : ComponentConstants.DEACTIVATION_REASON_CONFIGURATION_MODIFIED;
 
                     // FELIX-2368: cycle component immediately, reconfigure() is
                     //     called through ConfigurationListener API which itself is
                     //     called asynchronously by the Configuration Admin Service
-                    releaseActivationWriteeLock(  );
-                    //we have already determined that modify cannot be called. Therefore factory instances must be disposed.
-                    boolean dispose = m_factoryInstance;
-                    deactivateInternal( reason, dispose, dispose );
-                    if ( !dispose )
+                    releaseActivationWriteeLock( "reconfigure.modified.1" );;
+                    deactivateInternal( reason, false, false );
+                    obtainActivationWriteLock( "reconfigure.deactivate.activate" );
+                    try
                     {
-                        obtainActivationWriteLock();
-                        try
-                        {
-                            updateTargets(getProperties());
-                        }
-                        finally
-                        {
-                            releaseActivationWriteeLock();
-                        }
-                        activateInternal();
+                        updateTargets( getProperties() );
                     }
+                    finally
+                    {
+                        releaseActivationWriteeLock( "reconfigure.deactivate.activate" );;
+                    }
+                    activateInternal( getTrackingCount().get() );
                 }
             }
             finally
             {
                 //used if modify succeeds or if there's an exception.
-                releaseActivationWriteeLock(  );
+                releaseActivationWriteeLock( "reconfigure.end" );;
             }
         }
         finally
         {
-            enableLatch.resolve(null);
+            enableLatch.countDown();
         }
     }
 
-    private boolean modify(boolean configurationDeleted)
+    private boolean modify()
     {
-        //0 SCR 112.7.1 If configuration is deleted, and version is < 1.3 and no flag set, then deactivate unconditionally.
-        // For version 1.3 and later, or with a flag, more sensible behavior is allowed.
-        if ( configurationDeleted && !getComponentMetadata().isDeleteCallsModify()){
-            return false;
-        }
-
         // 1. no live update if there is no declared method
         if ( getComponentMetadata().getModified() == null )
         {
@@ -704,8 +675,8 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
 
         // 3. check whether we can dynamically apply the configuration if
         // any target filters influence the bound services
-        final Map<String, Object> props = getProperties();
-        for ( DependencyManager<S, ?> dm: getDependencyManagers() )
+        final Dictionary<String, Object> props = getProperties();
+        for ( DependencyManager dm: getDependencyManagers() )
         {
             if ( !dm.canUpdateDynamically( props ) )
             {
@@ -720,7 +691,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         // 4. call method (nothing to do when failed, since it has already been logged)
         //   (call with non-null default result to continue even if the
         //    modify method call failed)
-        obtainStateLock(  );
+        obtainStateLock( "ImmediateComponentManager.modify" );
         try
         {
             //cf 112.5.12 where invoking modified method before updating target services is specified.
@@ -739,8 +710,8 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             // this dynamic update and have the component be deactivated
             if ( !verifyDependencyManagers() )
             {
-                log( LogService.LOG_DEBUG,
-                        "Updating the service references caused at least one reference to become unsatisfied, deactivating component",
+                log( LogService.LOG_ERROR,
+                        "Updating the service references caused at least on reference to become unsatisfied, deactivating component",
                         null );
                 return false;
             }
@@ -748,7 +719,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
             // 6. update service registration properties if we didn't just do it
             if ( result.hasResult() )
             {
-                setServiceProperties( result, null );
+                setServiceProperties( result );
             }
             else
             {
@@ -760,16 +731,16 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
         }
         finally
         {
-            releaseStateLock(  );
+            releaseStateLock( "ImmediateComponentManager.modify" );
         }
     }
 
     protected MethodResult invokeModifiedMethod()
     {
-        ComponentMethod modifiedMethod = getComponentMethods().getModifiedMethod();
+        ModifiedMethod modifiedMethod = getComponentMethods().getModifiedMethod();
         if ( getInstance() != null )
         {
-            return modifiedMethod.invoke( getInstance(), m_componentContext, -1,
+            return modifiedMethod.invoke( getInstance(), new ActivatorParameter( m_componentContext, -1 ),
                     MethodResult.VOID, this );
         }
         return MethodResult.VOID;
@@ -786,7 +757,7 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
      * @return <code>true</code> if the registration service properties equals
      *         the prop properties, false if not.
      */
-    private boolean servicePropertiesMatches( ServiceRegistration<S> reg, Dictionary<String, Object> props )
+    private boolean servicePropertiesMatches( ServiceRegistration reg, Dictionary<String, Object> props )
     {
         Dictionary<String, Object> regProps = new Hashtable<String, Object>();
         String[] keys = reg.getReference().getPropertyKeys();
@@ -803,114 +774,108 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
 
     public S getService( Bundle bundle, ServiceRegistration<S> serviceRegistration )
     {
-        obtainStateLock(  );
-        try
+        boolean success = getServiceInternal();
+        if ( success )
         {
             m_useCount.incrementAndGet();
+            return m_componentContext.getImplementationObject( true );
         }
-        finally
+        else
         {
-            releaseStateLock( );
-        }
-        boolean decrement = true;
-        try {
-            if ( getActivator().enterCreate(serviceRegistration.getReference()))
-            {
-                return null;
-            }
-            try
-            {
-                boolean success = getServiceInternal(serviceRegistration);
-                ComponentContextImpl<S> componentContext = m_componentContext;
-                if ( success && componentContext != null)
-                {
-                    decrement = false;
-                    return componentContext.getImplementationObject( true );
-                }
-                else
-                {
-                    return null;
-                }
-            }
-            finally
-            {
-                //This is backup.  Normally done in createComponent.
-                getActivator().leaveCreate(serviceRegistration.getReference());
-            }
-            
-        }
-        finally
-        {
-            if ( decrement )
-            {
-                ungetService( bundle, serviceRegistration, null );
-            }
+            return null;
         }
     }
 
-
+    
     @Override
-    boolean getServiceInternal(ServiceRegistration<S> serviceRegistration)
+    boolean getServiceInternal()
     {
-        boolean success = true;
-        if ( m_componentContext == null )
+        if (m_circularReferences.get() != null)
         {
-            ComponentContextImpl<S> componentContext = new ComponentContextImpl<S>(this, this.getBundle(), serviceRegistration);
-            if ( collectDependencies(componentContext))
+            log( LogService.LOG_ERROR,  "Circular reference detected, getService returning null", null );
+            dumpThreads();
+            return false;             
+        }
+        m_circularReferences.set( Boolean.TRUE );
+        try
+        {
+            boolean success = true;
+            if ( m_componentContext == null )
             {
-                log( LogService.LOG_DEBUG,
-                    "getService (single component manager) dependencies collected.",
-                    null );
-            }
-            else
-            {
-                log( LogService.LOG_INFO,
-                    "Could not obtain all required dependencies, getService returning null",
-                    null );
-                success = false;
-            }
-            obtainStateLock(  );
-            try
-            {
-                if ( m_componentContext == null )
+                try
                 {
-                    State previousState = getState();
-                    //state should be "Registered"
-                    S result = getService(componentContext );
-                    if ( result == null )
+                    if ( !collectDependencies() )
                     {
-                        success = false;;
+                        log(
+                                LogService.LOG_DEBUG,
+                                "getService did not win collecting dependencies, try creating object anyway.",
+                                null );
+
                     }
                     else
                     {
-                        setState(previousState, State.active);
+                        log(
+                                LogService.LOG_DEBUG,
+                                "getService won collecting dependencies, proceed to creating object.",
+                                null );
+
                     }
                 }
+                catch ( IllegalStateException e )
+                {
+                    log(
+                            LogService.LOG_INFO,
+                            "Could not obtain all required dependencies, getService returning null",
+                            null );
+                    success = false;
+                }
+                obtainStateLock( "ImmediateComponentManager.getService.1" );
+                try
+                {
+                    if ( m_componentContext == null )
+                    {
+                        //state should be "Registered"
+                        S result = getService( );
+                        if ( result == null )
+                        {
+                            success = false;;
+                        }
+                        else
+                        {
+                            m_activated = true;
+                        }
+                    }
+                }
+                finally
+                {
+                    releaseStateLock( "ImmediateComponentManager.getService.1" );
+                }
             }
-            finally
-            {
-                releaseStateLock(  );
-            }
+            return success;
         }
-        return success;
+        finally
+        {
+            //normally this will have been done after object becomes accessible.  This is double-checking.
+            m_circularReferences.remove();
+        }
     }
 
-    private S getService(ComponentContextImpl<S> componentContext)
+    private S getService()
     {
         //should be write locked
-        if (!getState().isEnabled())
+        if (!isEnabled())
         {
             return null;
         }
 
-        if ( createComponent(componentContext) )
+        if ( createComponent() )
         {
             return getInstance();
         }
 
         // log that the delayed component cannot be created (we don't
         // know why at this moment; this should already have been logged)
-        log( LogService.LOG_DEBUG, "Failed creating the component instance; see log for reason", null );
+        log( LogService.LOG_ERROR, "Failed creating the component instance; see log for reason", null );
 
         // component could not really be created. This may be temporary
         // so we stay in the registered state but ensure the component
@@ -931,34 +896,51 @@ public class SingleComponentManager<S> extends AbstractComponentManager<S> imple
 
     public void ungetService( Bundle bundle, ServiceRegistration<S> serviceRegistration, S o )
     {
-        obtainStateLock( );
-        try
+        // the framework should not call ungetService more than it calls
+        // calls getService. Still, we want to be sure to not go below zero
+        if ( m_useCount.get() > 0 )
         {
+            int useCount = m_useCount.decrementAndGet();
+
             // unget the service instance if no bundle is using it
             // any longer unless delayed component instances have to
             // be kept (FELIX-3039)
-            if (  m_useCount.decrementAndGet() == 0 && !isImmediate() && !keepInstances() )
+            if ( useCount == 0 && !isImmediate() && !keepInstances() )
             {
-                State previousState = getState();
-                deleteComponent( ComponentConstants.DEACTIVATION_REASON_UNSPECIFIED );
-                setState(previousState, State.satisfied);
+                obtainStateLock( "ImmediateComponentManager.ungetService.1" );
+                try
+                {
+                    if ( m_useCount.get() == 0 )
+                    {
+                        ungetService( );
+                        unsetDependenciesCollected();
+                    }
+                }
+                finally
+                {
+                    releaseStateLock( "ImmediateComponentManager.ungetService.1" );
+                }
             }
         }
-        finally
-        {
-            releaseStateLock(  );
-        }
+    }
+
+    void ungetService( )
+    {
+        deleteComponent( ComponentConstants.DEACTIVATION_REASON_UNSPECIFIED );
     }
 
     private boolean keepInstances()
     {
-        return getComponentMetadata().isDelayedKeepInstances();
+        return getActivator() != null && getActivator().getConfiguration().keepInstances();
     }
 
-    @Override
-    public void getComponentManagers(List<AbstractComponentManager<S>> cms)
+    public long getChangeCount()
     {
-        cms.add(this);
+        return m_changeCount;
     }
 
+    public TargetedPID getConfigurationTargetedPID()
+    {
+        return m_targetedPID;
+    }
 }

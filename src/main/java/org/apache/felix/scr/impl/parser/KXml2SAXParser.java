@@ -20,6 +20,7 @@ package org.apache.felix.scr.impl.parser;
 
 
 import java.io.Reader;
+import java.util.Properties;
 import java.util.Stack;
 
 import org.kxml2.io.KXmlParser;
@@ -59,9 +60,8 @@ public class KXml2SAXParser extends KXmlParser
     public void parseXML( KXml2SAXHandler handler ) throws Exception
     {
 
-        final Stack<XmlElement> openElements = new Stack<XmlElement>();
+        final Stack openElements = new Stack();
         XmlElement currentElement = null;
-        final Attributes attributes = new Attributes();
 
         while ( next() != XmlPullParser.END_DOCUMENT )
         {
@@ -73,7 +73,13 @@ public class KXml2SAXParser extends KXmlParser
                 currentElement = new XmlElement( getNamespace(), getName(), getLineNumber(), getColumnNumber() );
                 openElements.push( currentElement );
 
-                handler.startElement( getNamespace(), getName(), attributes );
+                Properties props = new Properties();
+                for ( int i = 0; i < getAttributeCount(); i++ )
+                {
+                    props.put( getAttributeName( i ), getAttributeValue( i ) );
+                }
+
+                handler.startElement( getNamespace(), getName(), props );
             }
             else if ( getEventType() == XmlPullParser.END_TAG )
             {
@@ -149,17 +155,5 @@ public class KXml2SAXParser extends KXmlParser
         {
             return name + "@" + line + ":" + col;
         }
-    }
-    
-    public class Attributes {
-    	
-    	public String getAttribute(String name) {
-    		return getAttributeValue("", name);
-    	}
-    	
-    	public String getAttribute(String uri, String name) {
-    		return getAttributeValue(uri, name);
-    	}
-
     }
 }
